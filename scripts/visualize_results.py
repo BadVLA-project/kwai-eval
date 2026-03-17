@@ -28,7 +28,7 @@ import numpy as np
 # --------------------------------------------------------------------------- #
 
 def _try_load(path: Path):
-    """Return dict/list content of a json/csv file, or None on failure."""
+    """Return dict/list content of a json/csv/xlsx file, or None on failure."""
     try:
         if path.suffix == '.json':
             with open(path) as f:
@@ -36,6 +36,9 @@ def _try_load(path: Path):
         if path.suffix == '.csv':
             import pandas as pd
             return pd.read_csv(path)
+        if path.suffix == '.xlsx':
+            import pandas as pd
+            return pd.read_excel(path)
     except Exception:
         return None
 
@@ -44,12 +47,29 @@ def _extract_score_from_json(data) -> float | None:
     """Pull the primary accuracy/score out of a result JSON."""
     if not isinstance(data, dict):
         return None
-    # Common keys in VLMEvalKit result JSONs
-    for key in ('accuracy', 'Accuracy', 'acc', 'score', 'Score', 'overall'):
+    # Common scalar keys
+    for key in ('accuracy', 'Accuracy', 'acc', 'score', 'Score'):
         if key in data:
             val = data[key]
             if isinstance(val, (int, float)):
                 return float(val)
+    # MVBench/MVBench_MP4 _rating.json format:
+    #   {"overall": [correct, total, "51.60%"], "task_type": [c, t, "xx%"], ...}
+    if 'overall' in data:
+        val = data['overall']
+        if isinstance(val, (int, float)):
+            return float(val)
+        if isinstance(val, list) and len(val) >= 3:
+            # [correct, total, "51.60%"] -> parse the percentage string
+            try:
+                return float(str(val[2]).rstrip('%'))
+            except (ValueError, TypeError):
+                pass
+        if isinstance(val, str) and val.endswith('%'):
+            try:
+                return float(val.rstrip('%'))
+            except ValueError:
+                pass
     # Nested: {"overall": {"accuracy": ...}}
     for v in data.values():
         if isinstance(v, dict):
