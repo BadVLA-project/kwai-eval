@@ -120,9 +120,33 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 os.environ['VLLM_USE_V1'] = '0'
             from vllm import LLM
             gpu_count = torch.cuda.device_count()
-            tp_size = gpu_count if gpu_count > 0 else 1
+
+            # Tensor Parallelism has diminishing returns for small models due to
+            # all-reduce communication overhead. Cap TP size based on model size:
+            #   < 8B  params  → tp=1 (single GPU, zero comm overhead)
+            #   8B–30B params → tp=2
+            #   > 30B params  → use all available GPUs
+            # Users can override via VLLM_TP_SIZE env var.
+            def _default_tp_size(model_path: str, available: int) -> int:
+                import re
+                m = re.search(r'[-_](\d+(?:\.\d+)?)B', model_path, re.IGNORECASE)
+                if m:
+                    params_b = float(m.group(1))
+                    if params_b < 8:
+                        return 1
+                    elif params_b < 30:
+                        return min(2, available)
+                return available if available > 0 else 1
+
+            env_tp = os.environ.get('VLLM_TP_SIZE', '')
+            if env_tp.isdigit():
+                tp_size = min(int(env_tp), gpu_count)
+            else:
+                tp_size = _default_tp_size(self.model_path, gpu_count)
+
             logging.info(
-                f'Using vLLM for {self.model_path} inference with {tp_size} GPUs (available: {gpu_count})'
+                f'Using vLLM for {self.model_path} inference with tp_size={tp_size} '
+                f'(available GPUs: {gpu_count}). Set VLLM_TP_SIZE env var to override.'
             )
             if os.environ.get('VLLM_WORKER_MULTIPROC_METHOD') != 'spawn':
                 logging.warning(

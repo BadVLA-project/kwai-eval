@@ -26,8 +26,14 @@ export SKIP_ERR="${SKIP_ERR:-1}"
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 # Set visible GPUs; defaults to all available. Override via: CUDA_VISIBLE_DEVICES=0,1 bash run.sh
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
-# GPU memory fraction given to vLLM (0.0-1.0). Increase if OOM is not a concern.
+# GPU memory fraction given to vLLM (0.0-1.0).
 export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+# Tensor-parallel size. For small models (4B) TP=1 is fastest (no all-reduce overhead).
+# The model.py will auto-pick based on model size if this is unset.
+# For true multi-GPU speedup on 4B models, run multiple instances instead:
+#   CUDA_VISIBLE_DEVICES=0 bash run.sh &
+#   CUDA_VISIBLE_DEVICES=1 bash run.sh &
+export VLLM_TP_SIZE="${VLLM_TP_SIZE:-1}"
 
 WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval_2gpu}"
 REUSE="${REUSE:-0}"
