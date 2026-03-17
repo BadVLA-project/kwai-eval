@@ -53,24 +53,41 @@ def _extract_score_from_json(data) -> float | None:
             val = data[key]
             if isinstance(val, (int, float)):
                 return float(val)
-    # MVBench/MVBench_MP4 _rating.json format:
-    #   {"overall": [correct, total, "51.60%"], "task_type": [c, t, "xx%"], ...}
+    # Handle 'overall' key in various formats
     if 'overall' in data:
         val = data['overall']
         if isinstance(val, (int, float)):
             return float(val)
+        # MVBench _rating.json: {"overall": [correct, total, "51.60%"]}
         if isinstance(val, list) and len(val) >= 3:
-            # [correct, total, "51.60%"] -> parse the percentage string
             try:
                 return float(str(val[2]).rstrip('%'))
             except (ValueError, TypeError):
                 pass
-        if isinstance(val, str) and val.endswith('%'):
+        # LongVideoBench _rating.json: {"overall": {"overall": "0.512", "question_category": {...}}}
+        if isinstance(val, dict) and 'overall' in val:
+            inner = val['overall']
+            if isinstance(inner, str):
+                try:
+                    v = float(inner)
+                    # If value <= 1.0, assume it's a fraction; convert to percentage
+                    return v * 100 if v <= 1.0 else v
+                except ValueError:
+                    pass
+            if isinstance(inner, (int, float)):
+                v = float(inner)
+                return v * 100 if v <= 1.0 else v
+        # Plain string: "51.60%" or "0.512"
+        if isinstance(val, str):
+            clean = val.rstrip('%')
             try:
-                return float(val.rstrip('%'))
+                v = float(clean)
+                if val.endswith('%'):
+                    return v
+                return v * 100 if v <= 1.0 else v
             except ValueError:
                 pass
-    # Nested: {"overall": {"accuracy": ...}}
+    # Recursive search in nested dicts
     for v in data.values():
         if isinstance(v, dict):
             result = _extract_score_from_json(v)
