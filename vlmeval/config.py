@@ -1226,9 +1226,9 @@ qwen3vl_series = {
         top_p=0.8,
         top_k=20
     ),
-    "Qwen3-VL-4B-Instruct-mixed": partial(
+    "Qwen3-VL-4B-Instruct-mixed-aot": partial(
         Qwen3VLChat,
-        model_path="/m2v_intern/xuboshen/zgw/RL-Models/qwen3_vl_mixed_proxy_training_8gpu_1/global_step_250/actor/huggingface",
+        model_path="/m2v_intern/xuboshen/zgw/RL-Models/qwen3_vl_temporal_aot_dapo_2gpu_offline_filtered/global_step_85/actor/qwen3_aot_mixed_85",
         use_custom_prompt=False,
         use_vllm=True,
         temperature=0.7, 

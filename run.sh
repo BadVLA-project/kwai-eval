@@ -18,11 +18,11 @@ export CXX=/usr/bin/g++
 
 # Keep tokenizer threads from oversubscribing CPU.
 export TOKENIZERS_PARALLELISM=false
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval_2gpu}"
-REUSE="${REUSE:-0}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval_8gpu}"
+REUSE="${REUSE:-1}"
 
 # ---------------------------------------------------------------------------
 # Offline mode: use local HF cache, disable all network access.
@@ -52,10 +52,16 @@ CMD=(
   --master-port="${MASTER_PORT:-29500}"
   run.py
   --data
-  LongVideoBench_1fps
   MVBench_MP4_1fps
+  LongVideoBench_1fps
+  AoTBench_ReverseFilm_16frame
+  AoTBench_UCF101_16frame
+  AoTBench_Rtime_t2v_16frame
+  AoTBench_Rtime_v2t_16frame
+  AoTBench_QA_16frame
+  FutureOmni_64frame
   --model
-  Qwen3-VL-4B-Instruct
+  Qwen3-VL-4B-Instruct-mixed-aot
   --work-dir "${WORK_DIR}"
 )
 
