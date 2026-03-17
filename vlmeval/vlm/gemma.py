@@ -216,7 +216,8 @@ class Gemma3(BaseModel):
                     "image": images
                 },
             },
-            sampling_params=sampling_params
+            sampling_params=sampling_params,
+            use_tqdm=False,
         )
         for o in outputs:
             generated_text = o.outputs[0].text

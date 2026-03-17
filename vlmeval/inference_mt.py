@@ -138,7 +138,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     else:
         model.set_dump_image(dataset.dump_image)
 
-    for i in tqdm(range(lt)):
+    for i in tqdm(range(lt), total=lt, desc=f'Infer {model_name}/{dataset_name}, Rank {rank}/{world_size}'):
         idx = data.iloc[i]['index']
         if idx in res:
             continue

@@ -596,11 +596,13 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                     "multi_modal_data": {"image": images},
                 },
                 sampling_params=sampling_params,
+                use_tqdm=False,
             )
         elif videos_nd:
             outputs = self.llm.generate(
                 video_inputs,
                 sampling_params=sampling_params,
+                use_tqdm=False,
             )
         else:
             outputs = self.llm.generate(
@@ -608,6 +610,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                     "prompt": text,
                 },
                 sampling_params=sampling_params,
+                use_tqdm=False,
             )
 
         for o in outputs:

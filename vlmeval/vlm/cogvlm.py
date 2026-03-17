@@ -217,7 +217,8 @@ class GLMThinking(BaseModel):
                         "image": images
                     },
                 },
-                sampling_params=sampling_params
+                sampling_params=sampling_params,
+                use_tqdm=False,
             )
 
             for o in outputs:

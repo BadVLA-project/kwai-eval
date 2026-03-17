@@ -168,7 +168,13 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         )
         setattr(model, 'VIDEO_LLM', False)
 
-    for i, idx in tqdm(enumerate(sample_indices_subrem)):
+    for i, idx in enumerate(
+        tqdm(
+            sample_indices_subrem,
+            total=len(sample_indices_subrem),
+            desc=f'Infer {model_name}/{dataset_name}, Rank {rank}/{world_size}',
+        )
+    ):
         if idx in res:
             continue
         if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:

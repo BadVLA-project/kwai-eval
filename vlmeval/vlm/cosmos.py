@@ -73,5 +73,5 @@ class Cosmos(BaseModel):
             "mm_processor_kwargs": video_kwargs,
         }
 
-        outputs = self.llm.generate([llm_inputs], sampling_params=self.sampling_params)
+        outputs = self.llm.generate([llm_inputs], sampling_params=self.sampling_params, use_tqdm=False)
         return outputs[0].outputs[0].text
