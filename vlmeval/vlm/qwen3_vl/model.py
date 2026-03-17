@@ -73,9 +73,11 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.repetition_penalty = repetition_penalty
         self.presence_penalty = presence_penalty
         self.temperature = temperature
+        self.do_sample = kwargs.pop('do_sample', self.temperature > 0)
         if self.total_pixels and self.total_pixels > 24576 * 32 * 32:
             print('The total number of video tokens might too large, resulting in an overly long input sequence.')
         self.generate_kwargs = dict(
+            do_sample=self.do_sample,
             max_new_tokens=self.max_new_tokens,
             top_p=top_p,
             top_k=top_k,
@@ -141,7 +143,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 seed=0,
                 max_model_len=32768,  
                 enforce_eager=True,
-                gpu_memory_utilization=kwargs.get("gpu_utils", 0.7),
+                gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
                 trust_remote_code=True,
             )
         else:
@@ -336,7 +338,8 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             print(f'\033[32m{response}\033[0m')
         return response
 
-    def generate_inner_vllm(self, message, dataset=None):
+    def _build_vllm_request(self, message, dataset=None):
+        """Build a single vLLM request dict from a message. Used for both single and batch inference."""
         from vllm import SamplingParams
         is_omni = listinstr(['omni'], self.model_path.lower())
         if is_omni:
@@ -356,8 +359,6 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         if self.system_prompt is not None:
             messages.append({'role': 'system', 'content': self.system_prompt})
         messages.append({'role': 'user', 'content': self._prepare_content(message, dataset=dataset)})
-        if self.verbose:
-            print(f'\033[31m{messages}\033[0m')
 
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         if is_omni:
@@ -370,15 +371,6 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 return_video_metadata=True,
             )
 
-        sampling_params = SamplingParams(
-            temperature=self.temperature,
-            max_tokens=self.max_new_tokens,
-            top_p=self.top_p,
-            top_k=self.top_k,
-            repetition_penalty=self.repetition_penalty,
-            presence_penalty=self.presence_penalty,
-            stop_token_ids=None
-        )
         mm_data = {}
         if image_inputs is not None:
             mm_data['image'] = image_inputs
@@ -395,6 +387,64 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         elif video_kwargs is not None:
             req['mm_processor_kwargs'] = video_kwargs
 
+        return req
+
+    def generate_batch_vllm(self, messages, dataset=None):
+        """Batch inference for a list of messages. Returns a list of response strings."""
+        from vllm import SamplingParams
+        sampling_params = SamplingParams(
+            temperature=self.temperature if self.do_sample else 0.0,
+            max_tokens=self.max_new_tokens,
+            top_p=self.top_p if self.do_sample else 1.0,
+            top_k=self.top_k if self.do_sample else -1,
+            repetition_penalty=self.repetition_penalty,
+            presence_penalty=self.presence_penalty,
+            stop_token_ids=None,
+        )
+        reqs = [self._build_vllm_request(msg, dataset=dataset) for msg in messages]
+        outputs = self.llm.generate(reqs, sampling_params=sampling_params, use_tqdm=True)
+        results = []
+        for o in outputs:
+            generated_text = o.outputs[0].text
+            if self.post_process:
+                resp = generated_text.split('\\boxed{')[-1]
+                lt = len(resp)
+                counter, end = 1, None
+                for i in range(lt):
+                    if resp[i] == '{':
+                        counter += 1
+                    elif resp[i] == '}':
+                        counter -= 1
+                    if counter == 0:
+                        end = i
+                        break
+                    elif i == lt - 1:
+                        end = lt
+                        break
+                if end is not None:
+                    generated_text = resp[:end]
+            results.append(generated_text)
+        return results
+
+    def generate_inner_vllm(self, message, dataset=None):
+        from vllm import SamplingParams
+        if self.verbose:
+            messages_preview = []
+            if self.system_prompt is not None:
+                messages_preview.append({'role': 'system', 'content': self.system_prompt})
+            messages_preview.append({'role': 'user', 'content': self._prepare_content(message, dataset=dataset)})
+            print(f'\033[31m{messages_preview}\033[0m')
+
+        sampling_params = SamplingParams(
+            temperature=self.temperature if self.do_sample else 0.0,
+            max_tokens=self.max_new_tokens,
+            top_p=self.top_p if self.do_sample else 1.0,
+            top_k=self.top_k if self.do_sample else -1,
+            repetition_penalty=self.repetition_penalty,
+            presence_penalty=self.presence_penalty,
+            stop_token_ids=None
+        )
+        req = self._build_vllm_request(message, dataset=dataset)
         outputs = self.llm.generate([req], sampling_params=sampling_params, use_tqdm=False)
 
         for o in outputs:

@@ -98,6 +98,8 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         or 'Qwen2-VL' in model_name
         or 'Qwen2.5-VL' in model_name
         or 'Qwen2.5-Omni' in model_name
+        or 'Qwen3-VL' in model_name
+        or 'Qwen3-Omni' in model_name
     ):
         kwargs = {'use_vllm': use_vllm}
 
@@ -168,6 +170,58 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             'will set its VIDEO_LLM to False to enable multi-image input for video.'
         )
         setattr(model, 'VIDEO_LLM', False)
+
+    # ------------------------------------------------------------------
+    # vLLM batch path: collect all prompts first, then run a single
+    # batched llm.generate() call to saturate all tensor-parallel GPUs.
+    # ------------------------------------------------------------------
+    if getattr(model, 'use_vllm', False) and hasattr(model, 'generate_batch_vllm'):
+        # Sync nframe / fps once before building prompts
+        if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
+            if dataset.nframe > 0 and getattr(model, 'nframe', 0) != dataset.nframe:
+                print(f'{model_name} nframe -> {dataset.nframe}')
+                setattr(model, 'nframe', dataset.nframe)
+        if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
+            if dataset.fps > 0 and getattr(model, 'fps', 0) != dataset.fps:
+                print(f'{model_name} fps -> {dataset.fps}')
+                setattr(model, 'fps', dataset.fps)
+
+        batch_indices, batch_structs = [], []
+        for idx in tqdm(sample_indices_subrem, desc=f'Build prompts {model_name}/{dataset_name}'):
+            if idx in res:
+                continue
+            try:
+                if hasattr(model, 'use_custom_prompt') and model.use_custom_prompt(dataset_name):
+                    struct = model.build_prompt(
+                        dataset.data.iloc[sample_map[idx]], dataset=dataset,
+                        video_llm=getattr(model, 'VIDEO_LLM', False)
+                    )
+                else:
+                    struct = dataset.build_prompt(sample_map[idx], video_llm=getattr(model, 'VIDEO_LLM', False))
+            except Exception as err:
+                if not skip_err:
+                    raise
+                logging.warning(
+                    f'Skip sample {idx} in {model_name}/{dataset_name} during prompt build: '
+                    f'{type(err).__name__}: {err}'
+                )
+                res[idx] = ''
+                continue
+            if struct is None:
+                continue
+            batch_indices.append(idx)
+            batch_structs.append(struct)
+
+        if batch_structs:
+            responses = model.generate_batch_vllm(batch_structs, dataset=dataset_name)
+            for idx, resp in zip(batch_indices, responses):
+                res[idx] = resp
+            dump(res, out_file)
+
+        res = {k: res[k] for k in sample_indices_sub}
+        dump(res, out_file)
+        return model
+    # ------------------------------------------------------------------
 
     for i, idx in enumerate(
         tqdm(

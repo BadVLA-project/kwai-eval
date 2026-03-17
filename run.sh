@@ -21,16 +21,38 @@ export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval_2gpu}"
-CONFIG_PATH="$(dirname "$0")/configs/qwen3_vl_4b_aot_fast.json"
-NPROC_PER_NODE="${NPROC_PER_NODE:-$(nvidia-smi --list-gpus | wc -l | tr -d ' ')}"
+# vLLM settings.
+# VLLM_WORKER_MULTIPROC_METHOD is also set in model.py but explicit here for clarity.
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+# Set visible GPUs; defaults to all available. Override via: CUDA_VISIBLE_DEVICES=0,1 bash run.sh
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
+# GPU memory fraction given to vLLM (0.0-1.0). Increase if OOM is not a concern.
+export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
 
-# Fast AoT path for Qwen3-VL-4B:
-# 1. torchrun for sample-level parallelism across GPUs
-# 2. transformers backend instead of vLLM TP
-# 3. short decoding budget for MCQ ("option letter only")
-torchrun --nproc-per-node="${NPROC_PER_NODE}" \
-  run.py \
-  --config "${CONFIG_PATH}" \
-  --work-dir "${WORK_DIR}" \
-  --reuse
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval_2gpu}"
+REUSE="${REUSE:-0}"
+
+# Stable AoT path for Qwen3-VL-4B:
+# 1. use VLMEvalKit default model config
+# 2. launch with python, which is the documented path for vLLM backend
+# 3. keep SKIP_ERR enabled so broken video samples do not abort the whole run
+CMD=(
+  python
+  run.py
+  --data
+  AoTBench_ReverseFilm_16frame
+  AoTBench_UCF101_16frame
+  AoTBench_Rtime_t2v_16frame
+  AoTBench_Rtime_v2t_16frame
+  AoTBench_QA_16frame
+  --model
+  Qwen3-VL-4B-Instruct
+  --work-dir "${WORK_DIR}"
+  --use-vllm
+)
+
+if [ "${REUSE}" = "1" ]; then
+  CMD+=(--reuse)
+fi
+
+"${CMD[@]}"
