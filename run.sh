@@ -16,34 +16,30 @@ unset CXX
 export CC=/usr/bin/gcc
 export CXX=/usr/bin/g++
 
-# Keep tokenizer threads from oversubscribing CPU when using torchrun.
+# Keep tokenizer threads from oversubscribing CPU.
 export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
-# vLLM settings.
-# VLLM_WORKER_MULTIPROC_METHOD is also set in model.py but explicit here for clarity.
-export VLLM_WORKER_MULTIPROC_METHOD=spawn
-# Set visible GPUs; defaults to all available. Override via: CUDA_VISIBLE_DEVICES=0,1 bash run.sh
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
-# GPU memory fraction given to vLLM (0.0-1.0).
-export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
-# Tensor-parallel size. For small models (4B) TP=1 is fastest (no all-reduce overhead).
-# The model.py will auto-pick based on model size if this is unset.
-# For true multi-GPU speedup on 4B models, run multiple instances instead:
-#   CUDA_VISIBLE_DEVICES=0 bash run.sh &
-#   CUDA_VISIBLE_DEVICES=1 bash run.sh &
-export VLLM_TP_SIZE="${VLLM_TP_SIZE:-1}"
-
 WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval_2gpu}"
 REUSE="${REUSE:-0}"
 
-# Stable AoT path for Qwen3-VL-4B:
-# 1. use VLMEvalKit default model config
-# 2. launch with python, which is the documented path for vLLM backend
-# 3. keep SKIP_ERR enabled so broken video samples do not abort the whole run
+# ---------------------------------------------------------------------------
+# Multi-GPU data-parallel launch via torchrun.
+#
+# Each rank loads a full copy of the model on its own GPU and processes
+# 1/NGPU of the dataset (VLMEvalKit shards by rank automatically).
+# This is faster than vLLM tensor-parallel for small models (< 8B) because
+# there is zero inter-GPU communication during inference.
+#
+# NGPU: how many GPUs to use (default: all visible).
+# ---------------------------------------------------------------------------
+NGPU="${NGPU:-$(python -c 'import torch; print(torch.cuda.device_count())')}"
+
 CMD=(
-  python
+  torchrun
+  --nproc-per-node="${NGPU}"
+  --master-port="${MASTER_PORT:-29500}"
   run.py
   --data
   AoTBench_ReverseFilm_16frame
@@ -54,7 +50,6 @@ CMD=(
   --model
   Qwen3-VL-4B-Instruct
   --work-dir "${WORK_DIR}"
-  --use-vllm
 )
 
 if [ "${REUSE}" = "1" ]; then
