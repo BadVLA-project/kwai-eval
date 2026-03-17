@@ -21,7 +21,7 @@ export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval_2gpu}"
 CONFIG_PATH="$(dirname "$0")/configs/qwen3_vl_4b_aot_fast.json"
 NPROC_PER_NODE="${NPROC_PER_NODE:-$(nvidia-smi --list-gpus | wc -l | tr -d ' ')}"
 

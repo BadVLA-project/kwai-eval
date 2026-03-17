@@ -1,0 +1,34 @@
+{
+    "model": {
+        "GPT4o_20240806_T00_HIGH": {
+            "class": "GPT4V",
+            "model": "gpt-4o-2024-08-06",
+            "temperature": 0,
+            "img_detail": "high"
+        },
+        "GPT4o_20240806_T10_Low": {
+            "class": "GPT4V",
+            "model": "gpt-4o-2024-08-06",
+            "temperature": 1.0,
+            "img_detail": "low"
+        },
+        "GPT4o_20241120": {}
+    },
+    "data": {
+        "MME-RealWorld-Lite": {
+            "class": "MMERealWorld",
+            "dataset": "MME-RealWorld-Lite"
+        },
+        "MMBench_DEV_EN_V11": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11"
+        },
+        "MMBench_Video_8frame_nopack":{},
+        "Video-MME_16frame_subs": {
+            "class": "VideoMME",
+            "dataset": "Video-MME",
+            "nframe": 16,
+            "use_subtitle": true
+        }
+    }
+}
