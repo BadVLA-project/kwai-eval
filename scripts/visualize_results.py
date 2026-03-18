@@ -389,7 +389,9 @@ def plot_radar(
     angles_deg = np.linspace(0, 360, num_vars, endpoint=False).tolist()
 
     # --- main polar figure ---
+    theta_offset = np.pi / 4  # rotate 45° so labels land at diagonal positions
     fig, ax = plt.subplots(figsize=(12, 12), subplot_kw=dict(polar=True))
+    ax.set_theta_offset(theta_offset)
 
     use_fill = len(complete_models) <= 6
 
@@ -401,7 +403,7 @@ def plot_radar(
         loop_vals = np.append(vals, vals[0])
         loop_angles = angles + [angles[0]]
         color = COLORS[mi % len(COLORS)]
-        ax.plot(loop_angles, loop_vals, color=color, linewidth=1.5,
+        ax.plot(loop_angles, loop_vals, color=color, linewidth=2.0,
                 linestyle='solid', label=model)
         if use_fill:
             ax.fill(loop_angles, loop_vals, color=color, alpha=0.15)
@@ -412,7 +414,7 @@ def plot_radar(
 
     ax.tick_params(pad=30)
     ax.set_xticks(angles)
-    ax.set_xticklabels(benchmarks, fontsize=10)
+    ax.set_xticklabels(benchmarks, fontsize=14, fontweight='bold')
 
     # --- delta annotations (2-model comparison only) ---
     if len(complete_models) == 2:
@@ -433,14 +435,14 @@ def plot_radar(
             # the benchmark name labels that sit outside it.
             ax.text(angle, 92, label,
                     ha='center', va='center',
-                    color=text_color, fontsize=9, fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.3', fc=bg_color,
-                              ec=text_color, lw=1.2, alpha=0.92),
+                    color=text_color, fontsize=13, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.35', fc=bg_color,
+                              ec=text_color, lw=1.5, alpha=0.93),
                     zorder=5)
 
-    # Legend
-    leg = ax.legend(loc='center right', bbox_to_anchor=(1.45, 0.5),
-                    fontsize=9, framealpha=0.8, ncol=1, labelspacing=1.0)
+    # Legend — upper-right corner (empty space outside polar circle)
+    leg = ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.12),
+                    fontsize=12, framealpha=0.9, ncol=1, labelspacing=0.8)
     for line in leg.get_lines():
         line.set_linewidth(2.5)
 
@@ -459,6 +461,7 @@ def plot_radar(
         oa.patch.set_visible(False)
         oa.grid(False)
         oa.xaxis.set_visible(False)
+        oa.set_theta_offset(theta_offset)  # must match main axis rotation
 
         axis_min, axis_max = axis_ranges[benchmarks[i]]
         rng = axis_max - axis_min if axis_max != axis_min else 1.0
@@ -468,19 +471,19 @@ def plot_radar(
         tick_labels = [f'{v:.1f}' for v in tick_actual]
 
         oa.set_rgrids(tick_norm, angle=angles_deg[i],
-                      labels=tick_labels, fontsize=8)
+                      labels=tick_labels, fontsize=11)
         oa.spines['polar'].set_visible(False)
         oa.set_ylim(0, 100)
 
     # Title & subtitle
     ax.set_title('Model Comparison (per-axis zoom)',
-                 fontsize=14, fontweight='bold', pad=30, y=1.08)
-    fig.text(0.5, 0.02,
+                 fontsize=16, fontweight='bold', pad=35, y=1.08)
+    fig.text(0.5, 0.01,
              'Note: Each axis is independently scaled to amplify differences. '
              'Tick labels show actual scores.',
-             ha='center', fontsize=8, fontstyle='italic', color='#666666')
+             ha='center', fontsize=10, fontstyle='italic', color='#666666')
 
-    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    fig.savefig(out_path, dpi=200, bbox_inches='tight')
     plt.close(fig)
     print(f'  saved → {out_path}')
 
