@@ -185,6 +185,37 @@ def scan_work_dir(work_dir: str) -> dict[str, dict[str, float]]:
     return results
 
 
+def _merge_prefix_groups(
+    results: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    """Merge sub-benchmarks that share the same prefix into one entry.
+
+    E.g. AoTBench_QA_16frame / AoTBench_UCF101_16frame / ... → AoTBench
+    Score is the average across sub-benchmarks (only for models that have
+    at least one sub-benchmark score).
+    """
+    prefix_map: dict[str, list[str]] = defaultdict(list)
+    for bench in results:
+        prefix = bench.split('_')[0]
+        prefix_map[prefix].append(bench)
+
+    merged: dict[str, dict[str, float]] = {}
+    for prefix, benches in prefix_map.items():
+        if len(benches) == 1:
+            merged[benches[0]] = results[benches[0]]
+        else:
+            all_models = sorted({m for b in benches for m in results[b]})
+            merged_scores: dict[str, float] = {}
+            for model in all_models:
+                scores = [results[b][model] for b in benches if model in results[b]]
+                if scores:
+                    merged_scores[model] = sum(scores) / len(scores)
+            sub_names = ', '.join(sorted(benches))
+            print(f'  merge → {prefix}  ({sub_names})')
+            merged[prefix] = merged_scores
+    return merged
+
+
 # --------------------------------------------------------------------------- #
 # Plotting
 # --------------------------------------------------------------------------- #
@@ -470,6 +501,8 @@ def main():
                         help='Directory to save plots (default: work_dir/plots)')
     parser.add_argument('--min-models', type=int, default=1,
                         help='Only plot benchmarks with at least this many models')
+    parser.add_argument('--no-merge-prefix', action='store_true', default=False,
+                        help='Disable automatic merging of same-prefix sub-benchmarks')
     args = parser.parse_args()
 
     out_dir = args.out_dir or osp.join(args.work_dir, 'plots')
@@ -482,6 +515,9 @@ def main():
         print('No result files found. Make sure evaluation has completed and '
               'result CSV/JSON files exist in the work_dir subdirectories.')
         sys.exit(1)
+
+    if not args.no_merge_prefix:
+        results = _merge_prefix_groups(results)
 
     print(f'\nFound {len(results)} benchmark(s), '
           f'{len({m for s in results.values() for m in s})} model(s)\n')
