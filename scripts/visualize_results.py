@@ -383,6 +383,34 @@ def plot_radar(
     ax.set_xticks(angles)
     ax.set_xticklabels(benchmarks, fontsize=10)
 
+    # --- delta annotations (2-model comparison only) ---
+    if len(complete_models) == 2:
+        m0, m1 = complete_models[0], complete_models[1]
+        import math
+        for i, bench in enumerate(benchmarks):
+            if m0 not in results[bench] or m1 not in results[bench]:
+                continue
+            delta = results[bench][m1] - results[bench][m0]
+            if abs(delta) < 0.01:
+                continue
+            angle = angles[i]
+            is_up = delta > 0
+            text_color = '#1a7a2e' if is_up else '#c0392b'
+            bg_color   = '#d6f5dc' if is_up else '#fde8e8'
+            symbol     = '▲' if is_up else '▼'
+            label      = f'{symbol}{abs(delta):.1f}'
+            # Alignment based on which quadrant the axis is in
+            cos_a = math.cos(angle)
+            sin_a = math.sin(angle)
+            ha = 'center' if abs(cos_a) < 0.35 else ('left' if cos_a > 0 else 'right')
+            va = 'center' if abs(sin_a) < 0.35 else ('bottom' if sin_a > 0 else 'top')
+            # Place just beyond the outer ring; tick labels sit at ~r=107, so r=120 clears them
+            ax.text(angle, 120, label,
+                    ha=ha, va=va,
+                    color=text_color, fontsize=10, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.25', fc=bg_color,
+                              ec=text_color, lw=1.2, alpha=0.9))
+
     # Legend
     leg = ax.legend(loc='center right', bbox_to_anchor=(1.45, 0.5),
                     fontsize=9, framealpha=0.8, ncol=1, labelspacing=1.0)
