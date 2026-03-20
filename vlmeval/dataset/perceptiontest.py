@@ -28,6 +28,8 @@ class PerceptionTest(VideoBaseDataset):
     TYPE = 'Video-MCQ'
 
     def __init__(self, dataset='PerceptionTest_val', nframe=16, fps=-1):
+        if fps > 0:
+            nframe = 0
         super().__init__(dataset=dataset, nframe=nframe, fps=fps)
 
     @classmethod
@@ -66,9 +68,19 @@ class PerceptionTest(VideoBaseDataset):
                 + glob.glob(osp.join(root, '*.zip'))
             ):
                 if 'video' in osp.basename(zf).lower():
+                    if not zipfile.is_zipfile(zf):
+                        print(f'PerceptionTest: skipping invalid/corrupted zip {zf} '
+                              f'(not a valid zip file; please re-download the dataset).')
+                        continue
                     print(f'PerceptionTest: extracting videos from {zf} ...')
-                    with zipfile.ZipFile(zf, 'r') as z:
-                        z.extractall(root)
+                    try:
+                        with zipfile.ZipFile(zf, 'r') as z:
+                            z.extractall(root)
+                    except zipfile.BadZipFile as e:
+                        print(f'PerceptionTest: failed to extract {zf}: {e}. '
+                              f'The zip file appears corrupted. '
+                              f'Please delete it and re-download the dataset.')
+                        continue
                     if osp.exists(video_dir) and len(os.listdir(video_dir)) > 0:
                         return video_dir
             return video_dir  # may not exist yet; build_prompt handles missing file gracefully

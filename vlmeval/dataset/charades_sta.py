@@ -55,6 +55,8 @@ class CharadesSTA(VideoBaseDataset):
     TYPE = 'Video-VQA'
 
     def __init__(self, dataset='CharadesSTA', nframe=32, fps=-1):
+        if fps > 0:
+            nframe = 0
         super().__init__(dataset=dataset, nframe=nframe, fps=fps)
 
     @classmethod

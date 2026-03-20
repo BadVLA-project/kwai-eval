@@ -22,14 +22,14 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
 WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval_8gpu}"
-REUSE="${REUSE:-1}"
+REUSE="${REUSE:-0}"
 
 # ---------------------------------------------------------------------------
 # Offline mode: use local HF cache, disable all network access.
 # ---------------------------------------------------------------------------
-export HF_DATASETS_OFFLINE=1
+export HF_DATASETS_OFFLINE=0
 export TRANSFORMERS_OFFLINE=1
-export HF_HUB_OFFLINE=1
+export HF_HUB_OFFLINE=0
 export HF_HOME="${HF_HOME:-/m2v_intern/xuboshen/zgw/hf_cache_temp}"
 export HF_DATASETS_CACHE="${HF_HOME}/datasets"
 export HUGGINGFACE_HUB_CACHE="${HF_HOME}/hub"
@@ -52,16 +52,11 @@ CMD=(
   --master-port="${MASTER_PORT:-29500}"
   run.py
   --data
-  MVBench_MP4_1fps
-  LongVideoBench_1fps
-  AoTBench_ReverseFilm_16frame
-  AoTBench_UCF101_16frame
-  AoTBench_Rtime_t2v_16frame
-  AoTBench_Rtime_v2t_16frame
-  AoTBench_QA_16frame
-  FutureOmni_64frame
+  PerceptionTest_val_16frame
+  PerceptionTest_test_16frame
+  CharadesSTA_1fps
   --model
-  Qwen3-VL-4B-Instruct-mixed-aot
+  Qwen3-VL-4B-Instruct
   --work-dir "${WORK_DIR}"
 )
 
@@ -70,3 +65,10 @@ if [ "${REUSE}" = "1" ]; then
 fi
 
 "${CMD[@]}"
+# AoTBench_ReverseFilm_16frame
+#   AoTBench_UCF101_16frame
+#   AoTBench_Rtime_t2v_16frame
+#   AoTBench_Rtime_v2t_16frame
+#   AoTBench_QA_16frame
+#   FutureOmni_64frame
+  # MVBench_MP4_1fps
