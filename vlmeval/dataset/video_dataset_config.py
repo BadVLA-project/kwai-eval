@@ -238,6 +238,15 @@ charades_sta_dataset = {
     'CharadesSTA_2fps': partial(CharadesSTA, dataset='CharadesSTA', fps=2.0),
 }
 
+charades_timelens_dataset = {
+    'CharadesTimeLens_8frame': partial(CharadesTimeLens, dataset='CharadesTimeLens', nframe=8),
+    'CharadesTimeLens_16frame': partial(CharadesTimeLens, dataset='CharadesTimeLens', nframe=16),
+    'CharadesTimeLens_32frame': partial(CharadesTimeLens, dataset='CharadesTimeLens', nframe=32),
+    'CharadesTimeLens_64frame': partial(CharadesTimeLens, dataset='CharadesTimeLens', nframe=64),
+    'CharadesTimeLens_1fps': partial(CharadesTimeLens, dataset='CharadesTimeLens', fps=1.0),
+    'CharadesTimeLens_2fps': partial(CharadesTimeLens, dataset='CharadesTimeLens', fps=2.0),
+}
+
 perceptiontest_dataset = {
     'PerceptionTest_val_8frame': partial(PerceptionTest, dataset='PerceptionTest_val', nframe=8),
     'PerceptionTest_val_16frame': partial(PerceptionTest, dataset='PerceptionTest_val', nframe=16),
@@ -255,7 +264,7 @@ dataset_groups = [
     megabench_dataset, qbench_video_dataset, moviechat1k_dataset, vdc_dataset, video_holmes_dataset, vcrbench_dataset,
     cg_av_counting_dataset, video_mmlu_dataset, egoexobench_dataset, dream_1k_dataset, video_tt_dataset,
     vsibench_dataset, aotbench_dataset, futureomni_dataset,
-    charades_sta_dataset, perceptiontest_dataset,
+    charades_sta_dataset, charades_timelens_dataset, perceptiontest_dataset,
 ]
 
 for grp in dataset_groups:

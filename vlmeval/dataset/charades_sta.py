@@ -207,3 +207,142 @@ class CharadesSTA(VideoBaseDataset):
         for k, v in result.items():
             print(f'  {k}: {v:.2f}%')
         return result
+
+
+# ---------------------------------------------------------------------------
+# TimeLens-Bench variant of Charades-STA
+# ---------------------------------------------------------------------------
+
+_TIMELENS_DEFAULT_DIR = '/m2v_intern/xuboshen/zgw/hf_cache_temp/TimeLens-Bench'
+
+
+class CharadesTimeLens(CharadesSTA):
+    """Charades-STA loaded from a local TimeLens-Bench checkout.
+
+    Expected directory layout (set via env-var ``TIMELENS_DIR`` or the
+    class-level default):
+
+        {timelens_dir}/
+            charades-timelens.json
+            video_shards/
+                charades/
+                    charades_shard_01.tar.gz   # (or any *.tar.gz here)
+                    videos/                    # extracted mp4s land here
+
+    JSON schema
+    -----------
+    {
+        "<video_id>": {
+            "duration": <float>,
+            "spans":   [[start, end], ...],   # one per query
+            "queries": ["caption ...", ...]
+        },
+        ...
+    }
+
+    Each (video_id, query_idx) pair becomes one evaluation row.
+    """
+
+    TYPE = 'Video-VQA'
+
+    def __init__(self, dataset='CharadesTimeLens', nframe=32, fps=-1):
+        if fps > 0:
+            nframe = 0
+        # Skip CharadesSTA.__init__ and call VideoBaseDataset.__init__ directly
+        # (same pattern as the parent, just override prepare_dataset)
+        VideoBaseDataset.__init__(self, dataset=dataset, nframe=nframe, fps=fps)
+
+    @classmethod
+    def supported_datasets(cls):
+        return ['CharadesTimeLens']
+
+    # ------------------------------------------------------------------
+    #  Dataset preparation
+    # ------------------------------------------------------------------
+
+    def prepare_dataset(self, dataset_name='CharadesTimeLens', **_ignored):
+        import glob
+        import tarfile
+
+        timelens_dir = os.environ.get('TIMELENS_DIR', _TIMELENS_DEFAULT_DIR)
+        json_path = osp.join(timelens_dir, 'charades-timelens.json')
+        if not osp.exists(json_path):
+            raise FileNotFoundError(
+                f'charades-timelens.json not found at {json_path}. '
+                f'Set the TIMELENS_DIR environment variable to the TimeLens-Bench root.'
+            )
+
+        shard_dir = osp.join(timelens_dir, 'video_shards', 'charades')
+        video_dir = osp.join(shard_dir, 'videos')
+
+        # Ensure videos are extracted
+        if not osp.exists(video_dir) or len(os.listdir(video_dir)) == 0:
+            os.makedirs(video_dir, exist_ok=True)
+            tar_files = sorted(glob.glob(osp.join(shard_dir, '*.tar.gz')))
+            if not tar_files:
+                raise FileNotFoundError(
+                    f'No *.tar.gz shard found under {shard_dir}.'
+                )
+            for tf in tar_files:
+                print(f'CharadesTimeLens: extracting {tf} -> {video_dir} ...')
+                with tarfile.open(tf, 'r:gz') as t:
+                    # Extract only mp4 files, stripping any leading path components
+                    for member in t.getmembers():
+                        if member.name.endswith('.mp4'):
+                            member.name = osp.basename(member.name)
+                            t.extract(member, path=video_dir)
+
+        # Build annotation TSV (idempotent)
+        tsv_file = osp.join(timelens_dir, f'{dataset_name}.tsv')
+        if not osp.exists(tsv_file):
+            with open(json_path, 'r') as f:
+                import json
+                ann = json.load(f)
+
+            rows = []
+            idx = 0
+            for video_id, meta in ann.items():
+                queries = meta['queries']
+                spans = meta['spans']
+                for q, span in zip(queries, spans):
+                    rows.append({
+                        'index': idx,
+                        'video': video_id,
+                        'question': q,
+                        'answer': str(list(span)),   # "[start, end]"
+                    })
+                    idx += 1
+            pd.DataFrame(rows).to_csv(tsv_file, sep='\t', index=False)
+            print(f'CharadesTimeLens: wrote {idx} rows to {tsv_file}')
+
+        return dict(data_file=tsv_file, root=video_dir)
+
+    # ------------------------------------------------------------------
+    #  build_prompt: identical to CharadesSTA except no video_file column
+    # ------------------------------------------------------------------
+
+    def build_prompt(self, line, video_llm):
+        if isinstance(line, int):
+            line = self.data.iloc[line]
+
+        video_id = str(line['video'])
+        video_path = osp.join(self.data_root, video_id + '.mp4')
+
+        message = []
+        if video_llm:
+            message.append(dict(type='video', value=video_path))
+        else:
+            frames = self.save_video_frames(video_id)
+            for frame in frames:
+                message.append(dict(type='image', value=frame))
+
+        text = f"{PRE_PROMPT}{line['question']}. {POST_PROMPT}"
+        message.append(dict(type='text', value=text))
+        return message
+
+    @classmethod
+    def evaluate(cls, eval_file, **judge_kwargs):
+        # Reuse CharadesSTA evaluation verbatim; just override the result header
+        result = CharadesSTA.evaluate.__func__(cls, eval_file, **judge_kwargs)
+        print('(CharadesTimeLens results shown above)')
+        return result
