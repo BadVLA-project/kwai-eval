@@ -182,31 +182,35 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
 
             # ── Isolate vLLM from torchrun's distributed env vars ──
             # torchrun sets MASTER_ADDR, MASTER_PORT, RANK, LOCAL_RANK, etc.
-            # vLLM's EngineCore subprocess inherits these and mistakenly tries
-            # to connect to torchrun's TCPStore, causing a timeout.  We strip
-            # them before creating the LLM instance and restore afterwards.
+            # vLLM's EngineCore subprocess (spawned, not forked) inherits the
+            # current process's env and may try to join torchrun's TCPStore.
+            # We strip these vars before creating the LLM and restore after.
             _dist_env_keys = [
                 'MASTER_ADDR', 'MASTER_PORT', 'RANK', 'LOCAL_RANK',
                 'WORLD_SIZE', 'LOCAL_WORLD_SIZE', 'GROUP_RANK',
                 'ROLE_RANK', 'ROLE_WORLD_SIZE', 'TORCHELASTIC_RUN_ID',
             ]
             _dist_env_backup = {k: os.environ.pop(k) for k in _dist_env_keys if k in os.environ}
-
-            # Destroy the existing torch.distributed process group (gloo)
-            # so vLLM's EngineCore subprocess doesn't inherit stale state.
-            import torch.distributed as _dist
-            _had_dist = _dist.is_initialized()
-            if _had_dist:
-                logging.info('[vLLM init] Destroying existing torch.distributed process group before LLM()')
-                _dist.destroy_process_group()
-
             # Force vLLM to bind to loopback
             os.environ['VLLM_HOST_IP'] = '127.0.0.1'
 
-            logging.info(
-                f'[vLLM init] Temporarily removed torchrun env vars: {list(_dist_env_backup.keys())}'
+            import sys
+            print(
+                f'[vLLM init] pid={os.getpid()} CUDA_VISIBLE_DEVICES={os.environ.get("CUDA_VISIBLE_DEVICES","N/A")} '
+                f'tp_size={tp_size} gpu_count={gpu_count} max_num_seqs={max_num_seqs}',
+                flush=True
             )
+            print(f'[vLLM init] Removed torchrun env vars: {list(_dist_env_backup.keys())}', flush=True)
+            print(f'[vLLM init] VLLM_HOST_IP={os.environ.get("VLLM_HOST_IP")}', flush=True)
+
+            # Check if torch.distributed is still alive (it should be — we
+            # no longer destroy it; the gloo process group is harmless since
+            # vLLM EngineCore is spawned, not forked).
+            import torch.distributed as _dist
+            print(f'[vLLM init] torch.distributed initialized: {_dist.is_initialized()}', flush=True)
+
             try:
+                print(f'[vLLM init] Creating vllm.LLM() ...', flush=True)
                 self.llm = LLM(
                     model=self.model_path,
                     max_num_seqs=max_num_seqs,
@@ -214,25 +218,18 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                     tensor_parallel_size=tp_size,
                     enable_expert_parallel=enable_expert_parallel,
                     seed=0,
-                    max_model_len=32768,  
+                    max_model_len=32768,
                     enforce_eager=True,
                     gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
                     trust_remote_code=True,
                 )
+                print(f'[vLLM init] LLM() created successfully, pid={os.getpid()}', flush=True)
+            except Exception as _e:
+                print(f'[vLLM init] LLM() FAILED: {_e}', file=sys.stderr, flush=True)
+                raise
             finally:
                 os.environ.update(_dist_env_backup)
-                # Re-initialize the process group so barrier() calls still work.
-                if _had_dist:
-                    logging.info('[vLLM init] Re-initializing gloo process group after LLM()')
-                    import datetime as _dt
-                    _dist.init_process_group(
-                        backend='gloo',
-                        timeout=_dt.timedelta(seconds=int(os.environ.get('DIST_TIMEOUT', 3600)))
-                    )
-                    logging.info(f'[vLLM init] gloo process group re-initialized successfully')
-                logging.info(
-                    f'[vLLM init] Restored torchrun env vars: {list(_dist_env_backup.keys())}'
-                )
+                print(f'[vLLM init] Restored torchrun env vars: {list(_dist_env_backup.keys())}', flush=True)
         else:
             if listinstr(['omni'], model_path.lower()):
                 self.model = Qwen3OmniMoeForConditionalGeneration.from_pretrained(
