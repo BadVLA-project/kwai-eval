@@ -226,25 +226,21 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             print(f'[vLLM init] Creating vllm.LLM() ...', flush=True)
 
             try:
-                # Serialize LLM() across ranks: V1 EngineCore subprocess IPC
-                # can deadlock when multiple instances init simultaneously.
-                import fcntl, tempfile as _tmpmod
-                _lock_path = os.path.join(_tmpmod.gettempdir(), 'vllm_eval_init.lock')
-                with open(_lock_path, 'w') as _lf:
-                    fcntl.flock(_lf, fcntl.LOCK_EX)
-                    print(f'[vLLM init] Acquired init lock (rank={_dist_rank})', flush=True)
-                    self.llm = LLM(
-                        model=self.model_path,
-                        max_num_seqs=max_num_seqs,
-                        # limit_mm_per_prompt=limit_mm,
-                        tensor_parallel_size=tp_size,
-                        enable_expert_parallel=enable_expert_parallel,
-                        seed=0,
-                        max_model_len=32768,
-                        enforce_eager=True,
-                        gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
-                        trust_remote_code=True,
-                    )
+                # Each rank owns a dedicated GPU (CUDA_VISIBLE_DEVICES already
+                # narrowed), so they can create LLM() concurrently without
+                # conflicting.  No file-lock serialization needed — a lock here
+                # would deadlock with the gloo re-init that follows.
+                self.llm = LLM(
+                    model=self.model_path,
+                    max_num_seqs=max_num_seqs,
+                    tensor_parallel_size=tp_size,
+                    enable_expert_parallel=enable_expert_parallel,
+                    seed=0,
+                    max_model_len=32768,
+                    enforce_eager=True,
+                    gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
+                    trust_remote_code=True,
+                )
                 print(f'[vLLM init] LLM() created successfully, pid={os.getpid()}', flush=True)
             except Exception as _e:
                 print(f'[vLLM init] LLM() FAILED: {_e}', file=sys.stderr, flush=True)
@@ -255,20 +251,25 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 # Restore env vars
                 os.environ.update(_dist_env_backup)
                 print(f'[vLLM init] Restored torchrun env vars: {list(_dist_env_backup.keys())}', flush=True)
-                # Re-create the gloo process group for subsequent barrier() calls
-                if _had_dist:
-                    print('[vLLM init] Re-initializing gloo process group ...', flush=True)
-                    import datetime as _dt
-                    _master_addr = _dist_env_backup.get('MASTER_ADDR', '127.0.0.1')
-                    _reinit_port = int(_dist_env_backup.get('MASTER_PORT', '29500')) + 10
-                    _dist.init_process_group(
-                        backend='gloo',
-                        init_method=f'tcp://{_master_addr}:{_reinit_port}',
-                        rank=_dist_rank,
-                        world_size=_dist_world_size,
-                        timeout=_dt.timedelta(seconds=int(os.environ.get('DIST_TIMEOUT', 3600)))
-                    )
-                    print(f'[vLLM init] gloo process group re-initialized, rank={_dist.get_rank()}', flush=True)
+
+            # Re-create the gloo process group for subsequent barrier() calls.
+            # This MUST be outside the try/finally (and outside any lock) so
+            # that all ranks reach init_process_group concurrently — otherwise
+            # the rank inside the lock blocks the rank waiting for the lock,
+            # while init_process_group waits for all ranks to join → deadlock.
+            if _had_dist:
+                print('[vLLM init] Re-initializing gloo process group ...', flush=True)
+                import datetime as _dt
+                _master_addr = _dist_env_backup.get('MASTER_ADDR', '127.0.0.1')
+                _reinit_port = int(_dist_env_backup.get('MASTER_PORT', '29500')) + 10
+                _dist.init_process_group(
+                    backend='gloo',
+                    init_method=f'tcp://{_master_addr}:{_reinit_port}',
+                    rank=_dist_rank,
+                    world_size=_dist_world_size,
+                    timeout=_dt.timedelta(seconds=int(os.environ.get('DIST_TIMEOUT', 3600)))
+                )
+                print(f'[vLLM init] gloo process group re-initialized, rank={_dist.get_rank()}', flush=True)
         else:
             if listinstr(['omni'], model_path.lower()):
                 self.model = Qwen3OmniMoeForConditionalGeneration.from_pretrained(
@@ -503,6 +504,276 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         if self.verbose:
             print(f'\033[32m{response}\033[0m')
         return response
+
+    # ------------------------------------------------------------------
+    # Token-budget dynamic batching for transformers path
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _estimate_visual_tokens(message: list[dict]) -> int:
+        """Rough token estimate for a single sample based on its media items.
+
+        Qwen3-VL uses ~1 token per 28×28 patch (merge_size=2, patch_size=14).
+        For video frames the default spatial resolution is around 384×384
+        which yields ~188 tokens per frame.  We use 200 as a round number.
+        Images at default resolution yield ~1000 tokens on average.
+        Text is typically < 200 tokens.  We add a flat 200 for text+overhead.
+        """
+        TOKENS_PER_FRAME = 200
+        TOKENS_PER_IMAGE = 1000
+        TEXT_OVERHEAD = 200
+        n_tokens = TEXT_OVERHEAD
+        for item in message:
+            if item.get('type') == 'video':
+                val = item.get('value', '')
+                if isinstance(val, list):
+                    # list-of-frames input
+                    n_tokens += len(val) * TOKENS_PER_FRAME
+                else:
+                    # single video file — estimate from nframes/fps metadata
+                    nframes = item.get('nframes', 0)
+                    if nframes > 0:
+                        n_tokens += nframes * TOKENS_PER_FRAME
+                    else:
+                        # fallback: try to read frame count from the file
+                        try:
+                            import cv2
+                            cap = cv2.VideoCapture(val)
+                            fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                            cap.release()
+                            # Assume model will sample at most 128 frames
+                            n_tokens += min(fc, 128) * TOKENS_PER_FRAME
+                        except Exception:
+                            n_tokens += 16 * TOKENS_PER_FRAME  # safe default
+            elif item.get('type') == 'image':
+                n_tokens += TOKENS_PER_IMAGE
+        return n_tokens
+
+    @staticmethod
+    def _pack_batches_by_budget(
+        indices: list[int],
+        token_counts: list[int],
+        max_batch_tokens: int,
+        max_batch_size: int,
+    ) -> list[list[int]]:
+        """Pack *indices* into batches so that the sum of token_counts per batch
+        does not exceed *max_batch_tokens* and the number of samples does not
+        exceed *max_batch_size*.  Samples are assumed pre-sorted by token count
+        (ascending) so that similarly-sized inputs land in the same batch,
+        minimising padding waste.
+        """
+        batches: list[list[int]] = []
+        cur_batch: list[int] = []
+        cur_tokens = 0
+        for idx in indices:
+            tc = token_counts[idx]
+            # A single sample larger than the budget → solo batch.
+            if tc >= max_batch_tokens:
+                if cur_batch:
+                    batches.append(cur_batch)
+                batches.append([idx])
+                cur_batch, cur_tokens = [], 0
+                continue
+            if cur_tokens + tc > max_batch_tokens or len(cur_batch) >= max_batch_size:
+                batches.append(cur_batch)
+                cur_batch, cur_tokens = [], 0
+            cur_batch.append(idx)
+            cur_tokens += tc
+        if cur_batch:
+            batches.append(cur_batch)
+        return batches
+
+    def generate_batch_transformers(self, messages, dataset=None, chunk_size=None):
+        """Batch inference with **dynamic token-budget scheduling**.
+
+        Instead of a fixed batch size that ignores actual sequence length,
+        this method:
+        1. Estimates each sample's token count (visual + text).
+        2. Sorts samples by estimated length (short → long).
+        3. Packs them into batches whose total tokens ≤ TORCH_MAX_BATCH_TOKENS.
+        4. On OOM, automatically splits the failing batch in half and retries.
+
+        Env-var controls:
+        - ``TORCH_MAX_BATCH_TOKENS``: max total tokens per batch (default 16384).
+          Increase for more throughput on large-VRAM GPUs; decrease if OOM.
+        - ``TORCH_BATCH_SIZE``: hard cap on samples per batch (default 8).
+          Acts as a safety limit even when the token budget allows more.
+        """
+        max_batch_tokens = int(os.environ.get('TORCH_MAX_BATCH_TOKENS', '16384'))
+        max_batch_size = int(os.environ.get('TORCH_BATCH_SIZE', '8'))
+
+        is_omni = listinstr(['omni'], self.model_path.lower())
+        if is_omni:
+            return [self.generate_inner_transformers(msg, dataset=dataset) for msg in messages]
+
+        try:
+            from qwen_vl_utils import process_vision_info
+        except Exception as err:
+            logging.critical("Please install it via 'pip install qwen-vl-utils'")
+            raise err
+
+        from tqdm import tqdm as _tqdm
+
+        # --- Step 1: estimate tokens & sort ---
+        token_counts = [self._estimate_visual_tokens(msg) for msg in messages]
+        sorted_order = sorted(range(len(messages)), key=lambda i: token_counts[i])
+        batches = self._pack_batches_by_budget(sorted_order, token_counts, max_batch_tokens, max_batch_size)
+
+        logging.info(
+            f'[Torch batch] {len(messages)} samples → {len(batches)} batches '
+            f'(max_tokens={max_batch_tokens}, max_bs={max_batch_size})'
+        )
+
+        # Left-padding for batched generation.
+        orig_padding_side = self.processor.tokenizer.padding_side
+        self.processor.tokenizer.padding_side = 'left'
+
+        # results indexed by original position
+        results: list[str | None] = [None] * len(messages)
+
+        def _decode_response(raw: str) -> str:
+            response = raw
+            if self.post_process:
+                resp = response.split('\\boxed{')[-1]
+                lt = len(resp)
+                counter, end = 1, None
+                for j in range(lt):
+                    if resp[j] == '{':
+                        counter += 1
+                    elif resp[j] == '}':
+                        counter -= 1
+                    if counter == 0:
+                        end = j
+                        break
+                    elif j == lt - 1:
+                        end = lt
+                        break
+                if end is not None:
+                    response = resp[:end]
+            if self.extract_think_answer:
+                import re
+                m = re.search(r'<answer>(.*?)</answer>', response, re.DOTALL)
+                if m:
+                    response = m.group(1).strip()
+                else:
+                    response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
+            return response
+
+        def _run_batch(idx_list: list[int]) -> bool:
+            """Run a single batch.  Returns True on success, False on OOM."""
+            if len(idx_list) == 1:
+                # Single sample — use the well-tested sequential path.
+                results[idx_list[0]] = self.generate_inner_transformers(
+                    messages[idx_list[0]], dataset=dataset
+                )
+                return True
+
+            batch_texts: list[str] = []
+            batch_images: list = []
+            batch_videos: list = []
+            batch_video_metadatas: list = []
+            merged_video_kwargs: dict = {}
+
+            for idx in idx_list:
+                conversation: list[dict] = []
+                if self.system_prompt is not None:
+                    conversation.append({'role': 'system', 'content': self.system_prompt})
+                conversation.append({
+                    'role': 'user',
+                    'content': self._prepare_content(messages[idx], dataset=dataset),
+                })
+                text = self.processor.apply_chat_template(
+                    conversation, tokenize=False, add_generation_prompt=True,
+                )
+                batch_texts.append(text)
+
+                images, videos, video_kwargs = process_vision_info(
+                    conversation,
+                    image_patch_size=16,
+                    return_video_kwargs=True,
+                    return_video_metadata=True,
+                )
+                video_metadatas = None
+                if videos is not None:
+                    videos, video_metadatas = zip(*videos)
+                    videos, video_metadatas = list(videos), list(video_metadatas)
+                if images:
+                    batch_images.extend(images)
+                if videos:
+                    batch_videos.extend(videos)
+                if video_metadatas:
+                    batch_video_metadatas.extend(video_metadatas)
+                if video_kwargs:
+                    for k, v in video_kwargs.items():
+                        merged_video_kwargs.setdefault(k, []).extend(
+                            v if isinstance(v, list) else [v]
+                        )
+
+            inputs = self.processor(
+                text=batch_texts,
+                images=batch_images if batch_images else None,
+                videos=batch_videos if batch_videos else None,
+                video_metadata=batch_video_metadatas if batch_video_metadatas else None,
+                do_resize=False,
+                padding=True,
+                return_tensors='pt',
+                **(merged_video_kwargs or {}),
+            )
+            try:
+                inputs = inputs.to(self.model.device)
+                if hasattr(self.model, 'dtype'):
+                    inputs = inputs.to(self.model.dtype)
+            except Exception:
+                inputs = inputs.to('cuda')
+
+            try:
+                generated_ids = self.model.generate(**inputs, **self.generate_kwargs)
+            except torch.cuda.OutOfMemoryError:
+                # Clean up before caller retries with smaller batches.
+                del inputs
+                torch.cuda.empty_cache()
+                return False
+
+            input_pad_len = inputs.input_ids.shape[1]
+            for i, idx in enumerate(idx_list):
+                gen_tokens = generated_ids[i][input_pad_len:]
+                raw = self.processor.tokenizer.decode(
+                    gen_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False,
+                )
+                results[idx] = _decode_response(raw)
+
+            del inputs, generated_ids
+            torch.cuda.empty_cache()
+            return True
+
+        # --- Step 2: process batches with OOM recovery ---
+        work_queue: list[list[int]] = list(batches)
+        pbar = _tqdm(total=len(messages), desc='Torch batch generate')
+        while work_queue:
+            batch = work_queue.pop(0)
+            ok = _run_batch(batch)
+            if ok:
+                pbar.update(len(batch))
+            else:
+                # OOM → split in half and push back to front of queue.
+                if len(batch) <= 1:
+                    # Even a single sample OOMs — fall back to sequential with empty-cache.
+                    logging.warning(f'Single sample OOM (idx={batch[0]}), returning empty.')
+                    results[batch[0]] = ''
+                    pbar.update(1)
+                else:
+                    mid = len(batch) // 2
+                    logging.warning(
+                        f'OOM with batch size {len(batch)}, splitting into '
+                        f'{mid} + {len(batch) - mid}'
+                    )
+                    work_queue.insert(0, batch[mid:])
+                    work_queue.insert(0, batch[:mid])
+        pbar.close()
+
+        self.processor.tokenizer.padding_side = orig_padding_side
+        # Fill any remaining None (shouldn't happen, but be safe).
+        return [r if r is not None else '' for r in results]
 
     def _build_vllm_request(self, message, dataset=None):
         """Build a single vLLM request dict from a message. Used for both single and batch inference."""

@@ -224,6 +224,68 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         return model
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Torch batch path: when TORCH_MAX_BATCH_TOKENS is set (or
+    # TORCH_BATCH_SIZE > 1) and the model exposes
+    # generate_batch_transformers, collect all prompts and run
+    # token-budget-scheduled batch inference.
+    # ------------------------------------------------------------------
+    _has_batch_tokens = os.environ.get('TORCH_MAX_BATCH_TOKENS', '') != ''
+    _torch_bs = int(os.environ.get('TORCH_BATCH_SIZE', '1'))
+    if (
+        not getattr(model, 'use_vllm', False)
+        and (_has_batch_tokens or _torch_bs > 1)
+        and hasattr(model, 'generate_batch_transformers')
+    ):
+        # Sync nframe / fps once before building prompts
+        if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
+            if dataset.nframe > 0 and getattr(model, 'nframe', 0) != dataset.nframe:
+                print(f'{model_name} nframe -> {dataset.nframe}')
+                setattr(model, 'nframe', dataset.nframe)
+        if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
+            if dataset.fps > 0 and getattr(model, 'fps', 0) != dataset.fps:
+                print(f'{model_name} fps -> {dataset.fps}')
+                setattr(model, 'fps', dataset.fps)
+
+        batch_indices, batch_structs = [], []
+        for idx in tqdm(sample_indices_subrem, desc=f'Build prompts {model_name}/{dataset_name}'):
+            if idx in res:
+                continue
+            try:
+                if hasattr(model, 'use_custom_prompt') and model.use_custom_prompt(dataset_name):
+                    struct = model.build_prompt(
+                        dataset.data.iloc[sample_map[idx]], dataset=dataset,
+                        video_llm=getattr(model, 'VIDEO_LLM', False)
+                    )
+                else:
+                    struct = dataset.build_prompt(sample_map[idx], video_llm=getattr(model, 'VIDEO_LLM', False))
+            except Exception as err:
+                if not skip_err:
+                    raise
+                logging.warning(
+                    f'Skip sample {idx} in {model_name}/{dataset_name} during prompt build: '
+                    f'{type(err).__name__}: {err}'
+                )
+                res[idx] = ''
+                continue
+            if struct is None:
+                continue
+            batch_indices.append(idx)
+            batch_structs.append(struct)
+
+        if batch_structs:
+            responses = model.generate_batch_transformers(
+                batch_structs, dataset=dataset_name,
+            )
+            for idx, resp in zip(batch_indices, responses):
+                res[idx] = resp
+            dump(res, out_file)
+
+        res = {k: res[k] for k in sample_indices_sub}
+        dump(res, out_file)
+        return model
+    # ------------------------------------------------------------------
+
     for i, idx in enumerate(
         tqdm(
             sample_indices_subrem,
