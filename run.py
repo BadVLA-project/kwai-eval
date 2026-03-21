@@ -255,10 +255,17 @@ def main():
         # conflict with vLLM's process group.  Fall back to gloo (CPU-only
         # collective ops) which is sufficient for the barrier-only usage here.
         dist_backend = 'gloo' if args.use_vllm else 'nccl'
+        master_addr = os.environ.get('MASTER_ADDR', 'NOT_SET')
+        master_port = os.environ.get('MASTER_PORT', 'NOT_SET')
+        logger.info(
+            f'[DistInit] RANK={RANK}, WORLD_SIZE={WORLD_SIZE}, '
+            f'backend={dist_backend}, MASTER_ADDR={master_addr}, MASTER_PORT={master_port}'
+        )
         dist.init_process_group(
             backend=dist_backend,
             timeout=datetime.timedelta(seconds=int(os.environ.get('DIST_TIMEOUT', 3600)))
         )
+        logger.info(f'[DistInit] Process group initialized successfully for RANK={RANK}')
 
     for _, model_name in enumerate(args.model):
         model = None

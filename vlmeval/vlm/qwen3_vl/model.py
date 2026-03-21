@@ -179,18 +179,39 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             else:
                 limit_mm = {"image": self.limit_mm_per_prompt}
             max_num_seqs = int(os.environ.get('VLLM_MAX_NUM_SEQS', '8'))
-            self.llm = LLM(
-                model=self.model_path,
-                max_num_seqs=max_num_seqs,
-                # limit_mm_per_prompt=limit_mm,
-                tensor_parallel_size=tp_size,
-                enable_expert_parallel=enable_expert_parallel,
-                seed=0,
-                max_model_len=32768,  
-                enforce_eager=True,
-                gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
-                trust_remote_code=True,
+
+            # ── Isolate vLLM from torchrun's distributed env vars ──
+            # torchrun sets MASTER_ADDR, MASTER_PORT, RANK, LOCAL_RANK, etc.
+            # vLLM's EngineCore subprocess inherits these and mistakenly tries
+            # to connect to torchrun's TCPStore, causing a timeout.  We strip
+            # them before creating the LLM instance and restore afterwards.
+            _dist_env_keys = [
+                'MASTER_ADDR', 'MASTER_PORT', 'RANK', 'LOCAL_RANK',
+                'WORLD_SIZE', 'LOCAL_WORLD_SIZE', 'GROUP_RANK',
+                'ROLE_RANK', 'ROLE_WORLD_SIZE', 'TORCHELASTIC_RUN_ID',
+            ]
+            _dist_env_backup = {k: os.environ.pop(k) for k in _dist_env_keys if k in os.environ}
+            logging.info(
+                f'[vLLM init] Temporarily removed torchrun env vars: {list(_dist_env_backup.keys())}'
             )
+            try:
+                self.llm = LLM(
+                    model=self.model_path,
+                    max_num_seqs=max_num_seqs,
+                    # limit_mm_per_prompt=limit_mm,
+                    tensor_parallel_size=tp_size,
+                    enable_expert_parallel=enable_expert_parallel,
+                    seed=0,
+                    max_model_len=32768,  
+                    enforce_eager=True,
+                    gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
+                    trust_remote_code=True,
+                )
+            finally:
+                os.environ.update(_dist_env_backup)
+                logging.info(
+                    f'[vLLM init] Restored torchrun env vars: {list(_dist_env_backup.keys())}'
+                )
         else:
             if listinstr(['omni'], model_path.lower()):
                 self.model = Qwen3OmniMoeForConditionalGeneration.from_pretrained(
