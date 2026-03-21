@@ -59,6 +59,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         use_custom_prompt: bool = True,
         system_prompt: str | None = None,
         post_process: bool = False,
+        use_cot: bool = False,
         verbose: bool = False,
         use_audio_in_video: bool = True,
         **kwargs,
@@ -87,6 +88,25 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.system_prompt = system_prompt
         self.verbose = verbose
         self.post_process = post_process
+
+        # USE_COT env var allows runtime override without changing config entries.
+        use_cot = use_cot or os.environ.get('USE_COT', '0') == '1'
+        if use_cot:
+            self.temperature = 0.7
+            self.do_sample = True
+            self.max_new_tokens = 2048
+            self.post_prompt = (
+                'Please think step by step inside <think> tags, '
+                'then provide the final answer inside <answer> tags.'
+            )
+            self.extract_think_answer = True
+            self.generate_kwargs.update(
+                temperature=0.7, do_sample=True, max_new_tokens=2048
+            )
+        else:
+            self.post_prompt = None
+            self.extract_think_answer = False
+
         self.fps = kwargs.pop('fps', 2)
         self.nframe = kwargs.pop('nframe', 128)
         self.FRAME_FACTOR = 2
@@ -158,9 +178,10 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 limit_mm = {"image": 3, "video": 3, "audio": 3}
             else:
                 limit_mm = {"image": self.limit_mm_per_prompt}
+            max_num_seqs = int(os.environ.get('VLLM_MAX_NUM_SEQS', '8'))
             self.llm = LLM(
                 model=self.model_path,
-                max_num_seqs=8,
+                max_num_seqs=max_num_seqs,
                 # limit_mm_per_prompt=limit_mm,
                 tensor_parallel_size=tp_size,
                 enable_expert_parallel=enable_expert_parallel,
@@ -239,10 +260,45 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 item = {'type': 'audio', 'audio': s['value']}
             elif s['type'] == 'text':
                 item = {'type': 'text', 'text': s['value']}
+                if 'role' in s:
+                    item['role'] = s['role']
             else:
                 raise ValueError(f"Invalid message type: {s['type']}, {s}")
             content.append(item)
+        if self.post_prompt:
+            content = self._rewrite_prompt_for_cot(content)
         return content
+
+    # Patterns that instruct the model to answer directly (no CoT).
+    # Used by _rewrite_prompt_for_cot to strip them before appending a CoT instruction.
+    _DIRECT_ANSWER_PATTERNS = [
+        r'\n?Only give the best option\.?',
+        r'\n?Answer with the option letter only\.?',
+        r'\n?Answer with the option\'?s letter from the given choices directly\.?',
+        r'Respond with only the letter \([A-F][^)]*\) of the correct option\.?\s?',
+    ]
+
+    def _rewrite_prompt_for_cot(self, content: list[dict]) -> list[dict]:
+        """Strip 'answer directly' instructions from dataset prompts and append CoT instruction.
+
+        Also removes assistant-role prefill messages (e.g. MVBench 'Best option:(')
+        since CoT output won't start with an option letter.
+        """
+        import re
+        pattern = '|'.join(self._DIRECT_ANSWER_PATTERNS)
+        rewritten = []
+        for item in content:
+            # Drop assistant prefill messages (MVBench)
+            if item.get('type') == 'text' and item.get('role') == 'assistant':
+                continue
+            if item.get('type') == 'text':
+                text = re.sub(pattern, '', item['text']).strip()
+                if text:
+                    rewritten.append({**item, 'text': text})
+            else:
+                rewritten.append(item)
+        rewritten.append({'type': 'text', 'text': self.post_prompt})
+        return rewritten
 
     def generate_inner_transformers(self, message, dataset=None):
         is_omni = listinstr(['omni'], self.model_path.lower())
@@ -358,6 +414,14 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             if end is not None:
                 response = resp[:end]
 
+        if self.extract_think_answer:
+            import re
+            m = re.search(r'<answer>(.*?)</answer>', response, re.DOTALL)
+            if m:
+                response = m.group(1).strip()
+            else:
+                response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
+
         if self.verbose:
             print(f'\033[32m{response}\033[0m')
         return response
@@ -413,12 +477,14 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
 
         return req
 
-    def generate_batch_vllm(self, messages, dataset=None, chunk_size=32):
+    def generate_batch_vllm(self, messages, dataset=None, chunk_size=None):
         """Batch inference for a list of messages. Returns a list of response strings.
 
         Processes in chunks to avoid building all multimodal inputs in memory at once
         (1000+ video samples * 16 frames would stall before generation even starts).
         """
+        if chunk_size is None:
+            chunk_size = int(os.environ.get('VLLM_BATCH_CHUNK_SIZE', '32'))
         from vllm import SamplingParams
         from tqdm import tqdm as _tqdm
         sampling_params = SamplingParams(
@@ -457,6 +523,13 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                             break
                     if end is not None:
                         generated_text = resp[:end]
+                if self.extract_think_answer:
+                    import re
+                    m = re.search(r'<answer>(.*?)</answer>', generated_text, re.DOTALL)
+                    if m:
+                        generated_text = m.group(1).strip()
+                    else:
+                        generated_text = re.sub(r'<think>.*?</think>', '', generated_text, flags=re.DOTALL).strip()
                 results.append(generated_text)
         return results
 
@@ -501,6 +574,14 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                     break
             if end is not None:
                 generated_text = resp[:end]
+
+        if self.extract_think_answer:
+            import re
+            m = re.search(r'<answer>(.*?)</answer>', generated_text, re.DOTALL)
+            if m:
+                generated_text = m.group(1).strip()
+            else:
+                generated_text = re.sub(r'<think>.*?</think>', '', generated_text, flags=re.DOTALL).strip()
 
         if self.verbose:
             print(f'\033[32m{generated_text}\033[0m')

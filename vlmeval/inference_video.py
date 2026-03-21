@@ -213,7 +213,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             batch_structs.append(struct)
 
         if batch_structs:
-            chunk_size = 32
+            chunk_size = int(os.environ.get('VLLM_BATCH_CHUNK_SIZE', '32'))
             responses = model.generate_batch_vllm(batch_structs, dataset=dataset_name, chunk_size=chunk_size)
             for idx, resp in zip(batch_indices, responses):
                 res[idx] = resp

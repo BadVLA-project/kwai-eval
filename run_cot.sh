@@ -1,4 +1,3 @@
-
 #!/bin/bash
 set -euo pipefail
 set -x
@@ -44,23 +43,27 @@ export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 
 # ---------------------------------------------------------------------------
 # Multi-GPU data-parallel launch via torchrun.
-#
-# Each rank loads a full copy of the model on its own GPU and processes
-# 1/NGPU of the dataset (VLMEvalKit shards by rank automatically).
-# This is faster than vLLM tensor-parallel for small models (< 8B) because
-# there is zero inter-GPU communication during inference.
-#
-# NGPU: how many GPUs to use (default: all visible).
 # ---------------------------------------------------------------------------
 NGPU="${NGPU:-$(python -c 'import torch; print(torch.cuda.device_count())')}"
 
-# MODEL: which model entry from config.py to evaluate.
-# USE_COT=1: enable CoT mode — strips "answer directly" instructions from benchmark
-#            prompts, appends a <think><answer> CoT instruction, temperature=0.7,
-#            max_new_tokens=2048, and extracts <answer> content for evaluation.
-# USE_COT=0 (default): greedy direct-answer mode, temperature=0.
+# ---------------------------------------------------------------------------
+# CoT mode: chain-of-thought reasoning with <think>/<answer> tags.
+# Strips "answer directly" instructions, appends CoT prompt,
+# temperature=0.7, max_new_tokens=2048, extracts <answer> content.
+#
+# ── Acceleration for 80GB GPUs ──
+# Qwen3-VL-4B only uses ~10GB VRAM (tp=1). With 80GB available, we
+# significantly increase vLLM concurrency to saturate GPU utilization:
+#   VLLM_MAX_NUM_SEQS:   32 (default 8) — 4x more concurrent sequences
+#   VLLM_BATCH_CHUNK_SIZE: 64 (default 32) — larger batch chunks
+# This lets vLLM overlap KV cache computation across many sequences,
+# which is the main lever since CoT generates 2048 tokens per sample.
+# ---------------------------------------------------------------------------
 MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"
-export USE_COT="${USE_COT:-0}"
+export USE_COT=1
+export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-32}"
+export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-64}"
+export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
 
 CMD=(
   torchrun
@@ -91,13 +94,3 @@ if [ "${REUSE}" = "1" ]; then
 fi
 
 "${CMD[@]}"
-# PerceptionTest_val_16frame
-#   PerceptionTest_test_16frame
-# AoTBench_ReverseFilm_16frame
-#   AoTBench_UCF101_16frame
-#   AoTBench_Rtime_t2v_16frame
-#   AoTBench_Rtime_v2t_16frame
-#   AoTBench_QA_16frame
-#   FutureOmni_64frame
-# CharadesTimeLens_1fps
-  # MVBench_MP4_1fps

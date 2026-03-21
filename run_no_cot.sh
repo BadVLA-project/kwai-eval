@@ -1,4 +1,3 @@
-
 #!/bin/bash
 set -euo pipefail
 set -x
@@ -44,23 +43,14 @@ export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 
 # ---------------------------------------------------------------------------
 # Multi-GPU data-parallel launch via torchrun.
-#
-# Each rank loads a full copy of the model on its own GPU and processes
-# 1/NGPU of the dataset (VLMEvalKit shards by rank automatically).
-# This is faster than vLLM tensor-parallel for small models (< 8B) because
-# there is zero inter-GPU communication during inference.
-#
-# NGPU: how many GPUs to use (default: all visible).
 # ---------------------------------------------------------------------------
 NGPU="${NGPU:-$(python -c 'import torch; print(torch.cuda.device_count())')}"
 
-# MODEL: which model entry from config.py to evaluate.
-# USE_COT=1: enable CoT mode — strips "answer directly" instructions from benchmark
-#            prompts, appends a <think><answer> CoT instruction, temperature=0.7,
-#            max_new_tokens=2048, and extracts <answer> content for evaluation.
-# USE_COT=0 (default): greedy direct-answer mode, temperature=0.
+# ---------------------------------------------------------------------------
+# No CoT: greedy direct-answer mode, temperature=0.
+# ---------------------------------------------------------------------------
 MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"
-export USE_COT="${USE_COT:-0}"
+export USE_COT=0
 
 CMD=(
   torchrun
@@ -91,13 +81,3 @@ if [ "${REUSE}" = "1" ]; then
 fi
 
 "${CMD[@]}"
-# PerceptionTest_val_16frame
-#   PerceptionTest_test_16frame
-# AoTBench_ReverseFilm_16frame
-#   AoTBench_UCF101_16frame
-#   AoTBench_Rtime_t2v_16frame
-#   AoTBench_Rtime_v2t_16frame
-#   AoTBench_QA_16frame
-#   FutureOmni_64frame
-# CharadesTimeLens_1fps
-  # MVBench_MP4_1fps
