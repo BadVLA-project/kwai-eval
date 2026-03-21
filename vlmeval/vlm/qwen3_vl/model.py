@@ -138,10 +138,6 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         if self.use_vllm:
             if listinstr(['omni'], self.model_path.lower()):
                 os.environ['VLLM_USE_V1'] = '0'
-            # V1 engine spawns EngineCore subprocesses that deadlock under
-            # torchrun multi-rank setups (ZMQ IPC contention). Fall back to V0.
-            if int(os.environ.get('LOCAL_WORLD_SIZE', '1')) > 1:
-                os.environ.setdefault('VLLM_USE_V1', '0')
             from vllm import LLM
             gpu_count = torch.cuda.device_count()
 
@@ -213,8 +209,11 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             # it tries to use it for coordination, causing a deadlock since
             # both ranks are inside LLM() simultaneously.
             _had_dist = _dist.is_initialized()
+            _dist_rank = _dist.get_rank() if _had_dist else 0
+            _dist_world_size = _dist.get_world_size() if _had_dist else 1
             if _had_dist:
-                print('[vLLM init] Destroying gloo process group before LLM() to avoid deadlock', flush=True)
+                print(f'[vLLM init] Destroying gloo process group '
+                      f'(rank={_dist_rank}, world_size={_dist_world_size})', flush=True)
                 _dist.barrier()  # sync so both ranks destroy together
                 _dist.destroy_process_group()
 
@@ -227,18 +226,25 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             print(f'[vLLM init] Creating vllm.LLM() ...', flush=True)
 
             try:
-                self.llm = LLM(
-                    model=self.model_path,
-                    max_num_seqs=max_num_seqs,
-                    # limit_mm_per_prompt=limit_mm,
-                    tensor_parallel_size=tp_size,
-                    enable_expert_parallel=enable_expert_parallel,
-                    seed=0,
-                    max_model_len=32768,
-                    enforce_eager=True,
-                    gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
-                    trust_remote_code=True,
-                )
+                # Serialize LLM() across ranks: V1 EngineCore subprocess IPC
+                # can deadlock when multiple instances init simultaneously.
+                import fcntl, tempfile as _tmpmod
+                _lock_path = os.path.join(_tmpmod.gettempdir(), 'vllm_eval_init.lock')
+                with open(_lock_path, 'w') as _lf:
+                    fcntl.flock(_lf, fcntl.LOCK_EX)
+                    print(f'[vLLM init] Acquired init lock (rank={_dist_rank})', flush=True)
+                    self.llm = LLM(
+                        model=self.model_path,
+                        max_num_seqs=max_num_seqs,
+                        # limit_mm_per_prompt=limit_mm,
+                        tensor_parallel_size=tp_size,
+                        enable_expert_parallel=enable_expert_parallel,
+                        seed=0,
+                        max_model_len=32768,
+                        enforce_eager=True,
+                        gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
+                        trust_remote_code=True,
+                    )
                 print(f'[vLLM init] LLM() created successfully, pid={os.getpid()}', flush=True)
             except Exception as _e:
                 print(f'[vLLM init] LLM() FAILED: {_e}', file=sys.stderr, flush=True)
@@ -253,8 +259,13 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 if _had_dist:
                     print('[vLLM init] Re-initializing gloo process group ...', flush=True)
                     import datetime as _dt
+                    _master_addr = _dist_env_backup.get('MASTER_ADDR', '127.0.0.1')
+                    _reinit_port = int(_dist_env_backup.get('MASTER_PORT', '29500')) + 10
                     _dist.init_process_group(
                         backend='gloo',
+                        init_method=f'tcp://{_master_addr}:{_reinit_port}',
+                        rank=_dist_rank,
+                        world_size=_dist_world_size,
                         timeout=_dt.timedelta(seconds=int(os.environ.get('DIST_TIMEOUT', 3600)))
                     )
                     print(f'[vLLM init] gloo process group re-initialized, rank={_dist.get_rank()}', flush=True)
