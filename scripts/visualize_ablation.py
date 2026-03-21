@@ -15,8 +15,8 @@ Generates:
 
 Usage:
     # Single work_dir
-    python scripts/visualize_ablation.py \\
-        --work-dir /path/to/evaluation \\
+    python scripts/visualize_ablation.py \
+        --work-dir /m2v_intern/xuboshen/zgw/VideoProxyMixed/evaluation \
         --out-dir ./eval/aot_ablation/viz
 
     # CoT vs non-CoT comparison

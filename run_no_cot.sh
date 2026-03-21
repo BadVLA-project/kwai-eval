@@ -20,7 +20,7 @@ export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/evaluation}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/evaluation_vllm_noCoT}"
 REUSE="${REUSE:-0}"
 
 # ---------------------------------------------------------------------------
@@ -69,6 +69,7 @@ CMD=(
   MVBench_MP4_1fps
   PerceptionTest_val_16frame
   --model
+  Qwen3-VL-4B-Instruct
   Qwen3-VL-4B-Instruct_aot_ablation_exp1_v2t_binary
   Qwen3-VL-4B-Instruct_aot_ablation_exp2_v2t_3way
   Qwen3-VL-4B-Instruct_aot_ablation_exp3_t2v_binary
