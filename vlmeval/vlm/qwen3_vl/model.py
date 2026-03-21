@@ -226,21 +226,28 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             print(f'[vLLM init] Creating vllm.LLM() ...', flush=True)
 
             try:
-                # Each rank owns a dedicated GPU (CUDA_VISIBLE_DEVICES already
-                # narrowed), so they can create LLM() concurrently without
-                # conflicting.  No file-lock serialization needed — a lock here
-                # would deadlock with the gloo re-init that follows.
-                self.llm = LLM(
-                    model=self.model_path,
-                    max_num_seqs=max_num_seqs,
-                    tensor_parallel_size=tp_size,
-                    enable_expert_parallel=enable_expert_parallel,
-                    seed=0,
-                    max_model_len=32768,
-                    enforce_eager=True,
-                    gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
-                    trust_remote_code=True,
-                )
+                # Serialize LLM() creation across ranks via file lock.
+                # vLLM V1 EngineCore uses ZMQ/shared-memory IPC that can
+                # conflict when multiple instances initialize simultaneously.
+                # The lock ONLY covers LLM() — gloo re-init is outside so
+                # all ranks can reach init_process_group together.
+                import fcntl, tempfile as _tmpmod
+                _lock_path = os.path.join(_tmpmod.gettempdir(), 'vllm_eval_init.lock')
+                with open(_lock_path, 'w') as _lf:
+                    fcntl.flock(_lf, fcntl.LOCK_EX)
+                    print(f'[vLLM init] Acquired init lock (rank={_dist_rank})', flush=True)
+                    self.llm = LLM(
+                        model=self.model_path,
+                        max_num_seqs=max_num_seqs,
+                        tensor_parallel_size=tp_size,
+                        enable_expert_parallel=enable_expert_parallel,
+                        seed=0,
+                        max_model_len=32768,
+                        enforce_eager=True,
+                        gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
+                        trust_remote_code=True,
+                    )
+                # Lock released here (file closed).
                 print(f'[vLLM init] LLM() created successfully, pid={os.getpid()}', flush=True)
             except Exception as _e:
                 print(f'[vLLM init] LLM() FAILED: {_e}', file=sys.stderr, flush=True)
@@ -253,10 +260,11 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 print(f'[vLLM init] Restored torchrun env vars: {list(_dist_env_backup.keys())}', flush=True)
 
             # Re-create the gloo process group for subsequent barrier() calls.
-            # This MUST be outside the try/finally (and outside any lock) so
-            # that all ranks reach init_process_group concurrently — otherwise
-            # the rank inside the lock blocks the rank waiting for the lock,
-            # while init_process_group waits for all ranks to join → deadlock.
+            # This is OUTSIDE the file lock so all ranks can reach
+            # init_process_group concurrently (it's a collective op that
+            # needs all ranks to join).  The gloo timeout (default 3600s)
+            # is large enough to cover the time rank 1 spends waiting for
+            # the lock + creating its own LLM().
             if _had_dist:
                 print('[vLLM init] Re-initializing gloo process group ...', flush=True)
                 import datetime as _dt
