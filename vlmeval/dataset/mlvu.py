@@ -95,21 +95,32 @@ class MLVU_MCQ(VideoBaseDataset):
                     return False
             return True
 
-        if modelscope_flag_set():
-            repo_id = "AI-ModelScope/MLVU"
+        def unzip_mlvu_videos(pth):
+            video_dir = os.path.join(pth, 'MLVU', 'video')
+            zip_files = sorted(glob.glob(os.path.join(pth, 'video_part_*.zip')))
+            if not zip_files:
+                return
+            if os.path.exists(video_dir) and len(os.listdir(video_dir)) > 0:
+                print('MLVU videos already extracted, skipping.')
+                return
+            for zip_path in zip_files:
+                print(f'Extracting {os.path.basename(zip_path)} ...')
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    zf.extractall(pth)
+            print('MLVU video extraction complete.')
 
-        cache_path = get_cache_path(repo_id)
-        if cache_path is not None and check_integrity(cache_path):
-            dataset_path = cache_path
-        else:
-            def generate_tsv(pth):
-                data_file = osp.join(pth, f'{dataset_name}.tsv')
-                if os.path.exists(data_file) and md5(data_file) == self.MD5:
-                    return
-                json_data_dir = os.path.join(dataset_path, 'MLVU', 'json')
-                self.data_list = []
+        def generate_tsv(pth):
+            data_file = osp.join(pth, f'{dataset_name}.tsv')
+            if os.path.exists(data_file) and md5(data_file) == self.MD5:
+                return
+            json_data_dir = os.path.join(pth, 'MLVU', 'json')
+            self.data_list = []
+            if os.path.isdir(json_data_dir):
                 for k, v in self.type_data_list.items():
-                    with open(os.path.join(json_data_dir, v[0]), 'r') as f:
+                    json_path = os.path.join(json_data_dir, v[0])
+                    if not os.path.exists(json_path):
+                        continue
+                    with open(json_path, 'r') as f:
                         json_data = json.load(f)
                     for data in json_data:
                         self.data_list.append({
@@ -118,23 +129,72 @@ class MLVU_MCQ(VideoBaseDataset):
                             'duration': data['duration'],
                             'video': data['video'],
                             'question': data['question'],
-                            'answer': data['answer'],
-                            'candidates': data['candidates'],
+                            'answer': data.get('answer', ''),
+                            'candidates': data.get('candidates', ''),
                         })
-
-                data_df = pd.DataFrame(self.data_list)
-                data_df = data_df.assign(index=range(len(data_df)))
-                data_df.to_csv(data_file, sep='\t', index=False)
-
-            if modelscope_flag_set():
-                from modelscope import dataset_snapshot_download
-                dataset_path = dataset_snapshot_download(dataset_id=repo_id)
             else:
-                hf_token = os.environ.get('HUGGINGFACE_TOKEN')
-                huggingface_hub.login(hf_token)
-                dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                # Fall back to parquet when JSON annotations are absent (e.g. test split)
+                parquet_files = sorted(
+                    glob.glob(os.path.join(pth, 'mlvu_test', '*.parquet')) +
+                    glob.glob(os.path.join(pth, 'mlvu_dev', '*.parquet'))
+                )
+                if not parquet_files:
+                    raise FileNotFoundError(
+                        f'No JSON data at {json_data_dir} and no parquet files found under {pth}'
+                    )
+                df = pd.concat([pd.read_parquet(f) for f in parquet_files], ignore_index=True)
+                task_to_prefix = {k: v[1] for k, v in self.type_data_list.items()}
+                mcq_tasks = set(task_to_prefix.keys())
+                if 'task_type' in df.columns:
+                    df = df[df['task_type'].isin(mcq_tasks)]
+                for _, row in df.iterrows():
+                    task_type = str(row.get('task_type', ''))
+                    prefix = task_to_prefix.get(task_type, f'./MLVU/video/{task_type}')
+                    video = row.get('video', row.get('video_uid', row.get('video_id', '')))
+                    candidates = row.get('candidates', row.get('options', ''))
+                    self.data_list.append({
+                        'task_type': task_type,
+                        'prefix': prefix,
+                        'duration': row.get('duration', ''),
+                        'video': video,
+                        'question': row.get('question', ''),
+                        'answer': row.get('answer', ''),
+                        'candidates': candidates,
+                    })
+            if not self.data_list:
+                raise RuntimeError(f'No data loaded for {dataset_name}')
+            data_df = pd.DataFrame(self.data_list)
+            data_df = data_df.assign(index=range(len(data_df)))
+            data_df.to_csv(data_file, sep='\t', index=False)
 
-            generate_tsv(dataset_path)
+        if modelscope_flag_set():
+            repo_id = "AI-ModelScope/MLVU"
+
+        # ------------------------------------------------------------------
+        # 1. Local override: set MLVU_DIR to skip HuggingFace download
+        # ------------------------------------------------------------------
+        local_dir = os.environ.get('MLVU_DIR', '').strip()
+        if local_dir and osp.isdir(local_dir):
+            print(f'MLVU_MCQ: loading from local directory {local_dir}')
+            unzip_mlvu_videos(local_dir)
+            generate_tsv(local_dir)
+            dataset_path = local_dir
+        # ------------------------------------------------------------------
+        # 2. HuggingFace / ModelScope path (original behaviour)
+        # ------------------------------------------------------------------
+        else:
+            cache_path = get_cache_path(repo_id)
+            if cache_path is not None and check_integrity(cache_path):
+                dataset_path = cache_path
+            else:
+                if modelscope_flag_set():
+                    from modelscope import dataset_snapshot_download
+                    dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+                else:
+                    hf_token = os.environ.get('HUGGINGFACE_TOKEN')
+                    huggingface_hub.login(hf_token)
+                    dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                generate_tsv(dataset_path)
 
         data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
         return dict(root=dataset_path, data_file=data_file)
@@ -306,21 +366,32 @@ class MLVU_OpenEnded(VideoBaseDataset):
                     return False
             return True
 
-        if modelscope_flag_set():
-            repo_id = "AI-ModelScope/MLVU"
+        def unzip_mlvu_videos(pth):
+            video_dir = os.path.join(pth, 'MLVU', 'video')
+            zip_files = sorted(glob.glob(os.path.join(pth, 'video_part_*.zip')))
+            if not zip_files:
+                return
+            if os.path.exists(video_dir) and len(os.listdir(video_dir)) > 0:
+                print('MLVU videos already extracted, skipping.')
+                return
+            for zip_path in zip_files:
+                print(f'Extracting {os.path.basename(zip_path)} ...')
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    zf.extractall(pth)
+            print('MLVU video extraction complete.')
 
-        cache_path = get_cache_path(repo_id)
-        if cache_path is not None and check_integrity(cache_path):
-            dataset_path = cache_path
-        else:
-            def generate_tsv(pth):
-                data_file = osp.join(pth, f'{dataset_name}.tsv')
-                if os.path.exists(data_file) and md5(data_file) == self.MD5:
-                    return
-                json_data_dir = os.path.join(dataset_path, 'MLVU', 'json')
-                self.data_list = []
+        def generate_tsv(pth):
+            data_file = osp.join(pth, f'{dataset_name}.tsv')
+            if os.path.exists(data_file) and md5(data_file) == self.MD5:
+                return
+            json_data_dir = os.path.join(pth, 'MLVU', 'json')
+            self.data_list = []
+            if os.path.isdir(json_data_dir):
                 for k, v in self.type_data_list.items():
-                    with open(os.path.join(json_data_dir, v[0]), 'r') as f:
+                    json_path = os.path.join(json_data_dir, v[0])
+                    if not os.path.exists(json_path):
+                        continue
+                    with open(json_path, 'r') as f:
                         json_data = json.load(f)
                     for data in json_data:
                         self.data_list.append({
@@ -329,23 +400,71 @@ class MLVU_OpenEnded(VideoBaseDataset):
                             'duration': data['duration'],
                             'video': data['video'],
                             'question': data['question'],
-                            'answer': data['answer'],
-                            'scoring_points': data['scoring_points'] if 'scoring_points' in data else ''
+                            'answer': data.get('answer', ''),
+                            'scoring_points': data.get('scoring_points', ''),
                         })
-
-                data_df = pd.DataFrame(self.data_list)
-                data_df = data_df.assign(index=range(len(data_df)))
-                data_df.to_csv(data_file, sep='\t', index=False)
-
-            if modelscope_flag_set():
-                from modelscope import dataset_snapshot_download
-                dataset_path = dataset_snapshot_download(dataset_id=repo_id)
             else:
-                hf_token = os.environ.get('HUGGINGFACE_TOKEN')
-                huggingface_hub.login(hf_token)
-                dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                # Fall back to parquet when JSON annotations are absent (e.g. test split)
+                parquet_files = sorted(
+                    glob.glob(os.path.join(pth, 'mlvu_test', '*.parquet')) +
+                    glob.glob(os.path.join(pth, 'mlvu_dev', '*.parquet'))
+                )
+                if not parquet_files:
+                    raise FileNotFoundError(
+                        f'No JSON data at {json_data_dir} and no parquet files found under {pth}'
+                    )
+                df = pd.concat([pd.read_parquet(f) for f in parquet_files], ignore_index=True)
+                task_to_prefix = {k: v[1] for k, v in self.type_data_list.items()}
+                oe_tasks = set(task_to_prefix.keys())
+                if 'task_type' in df.columns:
+                    df = df[df['task_type'].isin(oe_tasks)]
+                for _, row in df.iterrows():
+                    task_type = str(row.get('task_type', ''))
+                    prefix = task_to_prefix.get(task_type, f'./MLVU/video/{task_type}')
+                    video = row.get('video', row.get('video_uid', row.get('video_id', '')))
+                    self.data_list.append({
+                        'task_type': task_type,
+                        'prefix': prefix,
+                        'duration': row.get('duration', ''),
+                        'video': video,
+                        'question': row.get('question', ''),
+                        'answer': row.get('answer', ''),
+                        'scoring_points': row.get('scoring_points', ''),
+                    })
+            if not self.data_list:
+                raise RuntimeError(f'No data loaded for {dataset_name}')
+            data_df = pd.DataFrame(self.data_list)
+            data_df = data_df.assign(index=range(len(data_df)))
+            data_df.to_csv(data_file, sep='\t', index=False)
 
-            generate_tsv(dataset_path)
+        if modelscope_flag_set():
+            repo_id = "AI-ModelScope/MLVU"
+
+        # ------------------------------------------------------------------
+        # 1. Local override: set MLVU_DIR to skip HuggingFace download
+        # ------------------------------------------------------------------
+        local_dir = os.environ.get('MLVU_DIR', '').strip()
+        if local_dir and osp.isdir(local_dir):
+            print(f'MLVU_OpenEnded: loading from local directory {local_dir}')
+            unzip_mlvu_videos(local_dir)
+            generate_tsv(local_dir)
+            dataset_path = local_dir
+        # ------------------------------------------------------------------
+        # 2. HuggingFace / ModelScope path (original behaviour)
+        # ------------------------------------------------------------------
+        else:
+            cache_path = get_cache_path(repo_id)
+            if cache_path is not None and check_integrity(cache_path):
+                dataset_path = cache_path
+            else:
+                if modelscope_flag_set():
+                    from modelscope import dataset_snapshot_download
+                    dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+                else:
+                    hf_token = os.environ.get('HUGGINGFACE_TOKEN')
+                    huggingface_hub.login(hf_token)
+                    dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                generate_tsv(dataset_path)
 
         data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
         return dict(root=dataset_path, data_file=data_file)

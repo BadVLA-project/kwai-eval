@@ -21,7 +21,7 @@ export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/eval_8gpu}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/evaluation}"
 REUSE="${REUSE:-0}"
 
 # ---------------------------------------------------------------------------
@@ -40,6 +40,7 @@ export HUGGINGFACE_HUB_CACHE="${HF_HOME}/hub"
 export VIDEO_HOLMES_DIR="${VIDEO_HOLMES_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/Video-Holmes}"
 export TIMELENS_DIR="${TIMELENS_DIR:-/m2v_intern/xuboshen/zgw/hf_cache_temp/TimeLens-Bench}"
 export PERCEPTION_TEST_DIR="${PERCEPTION_TEST_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/PerceptionTest}"
+export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 
 # ---------------------------------------------------------------------------
 # Multi-GPU data-parallel launch via torchrun.
