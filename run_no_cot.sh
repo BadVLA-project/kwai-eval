@@ -10,6 +10,10 @@ export GLOO_SOCKET_IFNAME=lo
 export NCCL_SOCKET_IFNAME=lo
 export VLLM_HOST_IP=127.0.0.1
 
+# Disable V1 engine: its EngineCore subprocess architecture deadlocks
+# when multiple torchrun ranks each spawn their own vLLM instance.
+export VLLM_USE_V1=0
+
 # Resolve libcuda lookup issues on some nodes.
 export LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:${LIBRARY_PATH:-}
 export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}

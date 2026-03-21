@@ -138,6 +138,10 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         if self.use_vllm:
             if listinstr(['omni'], self.model_path.lower()):
                 os.environ['VLLM_USE_V1'] = '0'
+            # V1 engine spawns EngineCore subprocesses that deadlock under
+            # torchrun multi-rank setups (ZMQ IPC contention). Fall back to V0.
+            if int(os.environ.get('LOCAL_WORLD_SIZE', '1')) > 1:
+                os.environ.setdefault('VLLM_USE_V1', '0')
             from vllm import LLM
             gpu_count = torch.cuda.device_count()
 
