@@ -1,5 +1,8 @@
 import torch
-import torch.distributed as dist
+try:
+    import torch.distributed as dist
+except ImportError:
+    dist = None
 from vlmeval.config import supported_VLM
 from vlmeval.utils import track_progress_rich
 from vlmeval.smp import *
@@ -421,7 +424,23 @@ def infer_data_job_video(
         use_vllm=use_vllm)
 
     if world_size > 1:
-        dist.barrier()
+        _barrier_dir = os.environ.get('VLMEVAL_BARRIER_DIR', '')
+        if _barrier_dir:
+            # File-based barrier (launched via launch_workers.py, no torch.distributed).
+            import time as _time
+            tag = f'infer_video_{dataset.dataset_name}'
+            flag = osp.join(_barrier_dir, f'{tag}_rank{rank}')
+            with open(flag, 'w') as _f:
+                _f.write('1')
+            timeout = int(os.environ.get('DIST_TIMEOUT', 3600))
+            t0 = _time.time()
+            while not all(osp.exists(osp.join(_barrier_dir, f'{tag}_rank{r}'))
+                          for r in range(world_size)):
+                if _time.time() - t0 > timeout:
+                    raise RuntimeError(f'file_barrier timeout in inference_video (rank={rank})')
+                _time.sleep(0.5)
+        elif dist is not None and dist.is_initialized():
+            dist.barrier()
 
     if rank == 0:
         data_all = {}

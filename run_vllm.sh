@@ -5,6 +5,10 @@ set -x
 # ==========================================================================
 # run_vllm.sh — vLLM backend, runs both CoT and No-CoT in one script.
 #
+# Uses launch_workers.py (independent processes, NO torchrun) to avoid
+# vLLM vs torch.distributed conflicts.  Each GPU gets its own Python
+# process with a dedicated vLLM engine.
+#
 # Usage:
 #   bash run_vllm.sh                  # run both CoT + No-CoT
 #   USE_COT=1 bash run_vllm.sh       # CoT only
@@ -14,9 +18,7 @@ set -x
 # Disable torch compile to avoid startup overhead.
 export TORCH_COMPILE_DISABLE=1
 
-# Force all distributed / vLLM networking to use loopback (single-node).
-export GLOO_SOCKET_IFNAME=lo
-export NCCL_SOCKET_IFNAME=lo
+# Force vLLM networking to use loopback (single-node).
 export VLLM_HOST_IP=127.0.0.1
 
 # Resolve libcuda lookup issues on some nodes.
@@ -35,6 +37,10 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
 REUSE="${REUSE:-0}"
+NGPU="${NGPU:-$(python -c 'import torch; print(torch.cuda.device_count())')}"
+# Stagger delay (seconds) between launching workers so vLLM instances
+# don't compete during init.  Set to 0 to launch all at once.
+DELAY="${DELAY:-15}"
 
 # ---------------------------------------------------------------------------
 # Offline mode: use local HF cache, disable all network access.
@@ -53,11 +59,6 @@ export VIDEO_HOLMES_DIR="${VIDEO_HOLMES_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks
 export TIMELENS_DIR="${TIMELENS_DIR:-/m2v_intern/xuboshen/zgw/hf_cache_temp/TimeLens-Bench}"
 export PERCEPTION_TEST_DIR="${PERCEPTION_TEST_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/PerceptionTest}"
 export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
-
-# ---------------------------------------------------------------------------
-# Multi-GPU data-parallel launch via torchrun.
-# ---------------------------------------------------------------------------
-NGPU="${NGPU:-$(python -c 'import torch; print(torch.cuda.device_count())')}"
 
 # ---------------------------------------------------------------------------
 # vLLM settings for 80GB GPUs (Qwen3-VL-4B ~10GB VRAM, tp=1).
@@ -99,10 +100,10 @@ run_eval() {
   export USE_COT="${cot_flag}"
 
   local CMD=(
-    torchrun
-    --nproc-per-node="${NGPU}"
-    --master-addr="${MASTER_ADDR:-127.0.0.1}"
-    --master-port="${MASTER_PORT:-29500}"
+    python launch_workers.py
+    --ngpu "${NGPU}"
+    --delay "${DELAY}"
+    --
     run.py
     --use-vllm
     --data "${DATASETS[@]}"

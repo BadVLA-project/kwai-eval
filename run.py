@@ -249,23 +249,66 @@ def main():
                     supported_VLM[m] = partial(GPT4V, **kws)
                     logger.warning(f'FWD_API is set, will use class `GPT4V` for {m}')
 
+    # ---------------------------------------------------------------------------
+    # Synchronisation setup.
+    # When VLMEVAL_BARRIER_DIR is set we use lightweight file-based barriers
+    # (no torch.distributed), which avoids all torchrun / vLLM conflicts.
+    # Otherwise fall back to the original torch.distributed path.
+    # ---------------------------------------------------------------------------
+    _barrier_dir = os.environ.get('VLMEVAL_BARRIER_DIR', '')
+    _use_file_barrier = bool(_barrier_dir) and WORLD_SIZE > 1
+    _barrier_counter = 0  # monotonic id for each barrier call
+
+    def file_barrier():
+        """Filesystem-based barrier for WORLD_SIZE independent processes."""
+        nonlocal _barrier_counter
+        tag = _barrier_counter
+        _barrier_counter += 1
+        # Signal this rank is ready.
+        flag = osp.join(_barrier_dir, f'barrier_{tag}_rank{RANK}')
+        with open(flag, 'w') as f:
+            f.write('1')
+        # Wait for all ranks.
+        import time as _time
+        timeout = int(os.environ.get('DIST_TIMEOUT', 3600))
+        t0 = _time.time()
+        while True:
+            if all(osp.exists(osp.join(_barrier_dir, f'barrier_{tag}_rank{r}'))
+                   for r in range(WORLD_SIZE)):
+                break
+            if _time.time() - t0 > timeout:
+                raise RuntimeError(f'file_barrier timeout (tag={tag}, rank={RANK})')
+            _time.sleep(0.5)
+
+    dist = None  # will be set only when using torch.distributed
     if WORLD_SIZE > 1:
-        import torch.distributed as dist
-        # vLLM manages its own GPU workers internally; using nccl here would
-        # conflict with vLLM's process group.  Fall back to gloo (CPU-only
-        # collective ops) which is sufficient for the barrier-only usage here.
-        dist_backend = 'gloo' if args.use_vllm else 'nccl'
-        master_addr = os.environ.get('MASTER_ADDR', 'NOT_SET')
-        master_port = os.environ.get('MASTER_PORT', 'NOT_SET')
-        logger.info(
-            f'[DistInit] RANK={RANK}, WORLD_SIZE={WORLD_SIZE}, '
-            f'backend={dist_backend}, MASTER_ADDR={master_addr}, MASTER_PORT={master_port}'
-        )
-        dist.init_process_group(
-            backend=dist_backend,
-            timeout=datetime.timedelta(seconds=int(os.environ.get('DIST_TIMEOUT', 3600)))
-        )
-        logger.info(f'[DistInit] Process group initialized successfully for RANK={RANK}')
+        if _use_file_barrier:
+            logger.info(f'[DistInit] Using file-based barrier (no torch.distributed), '
+                        f'barrier_dir={_barrier_dir}, RANK={RANK}, WORLD_SIZE={WORLD_SIZE}')
+        else:
+            import torch.distributed as dist
+            # vLLM manages its own GPU workers internally; using nccl here would
+            # conflict with vLLM's process group.  Fall back to gloo (CPU-only
+            # collective ops) which is sufficient for the barrier-only usage here.
+            dist_backend = 'gloo' if args.use_vllm else 'nccl'
+            master_addr = os.environ.get('MASTER_ADDR', 'NOT_SET')
+            master_port = os.environ.get('MASTER_PORT', 'NOT_SET')
+            logger.info(
+                f'[DistInit] RANK={RANK}, WORLD_SIZE={WORLD_SIZE}, '
+                f'backend={dist_backend}, MASTER_ADDR={master_addr}, MASTER_PORT={master_port}'
+            )
+            dist.init_process_group(
+                backend=dist_backend,
+                timeout=datetime.timedelta(seconds=int(os.environ.get('DIST_TIMEOUT', 3600)))
+            )
+            logger.info(f'[DistInit] Process group initialized successfully for RANK={RANK}')
+
+    def barrier():
+        """Unified barrier: file-based or torch.distributed."""
+        if _use_file_barrier:
+            file_barrier()
+        elif dist is not None:
+            dist.barrier()
 
     for _, model_name in enumerate(args.model):
         model = None
@@ -288,7 +331,7 @@ def main():
 
         for _, dataset_name in enumerate(args.data):
             if WORLD_SIZE > 1:
-                dist.barrier()
+                barrier()
 
             bench_start_time = time.time()
             try:
@@ -299,7 +342,7 @@ def main():
                     if WORLD_SIZE > 1:
                         if RANK == 0:
                             dataset = build_dataset_from_config(cfg['data'], dataset_name)
-                        dist.barrier()
+                        barrier()
                     dataset = build_dataset_from_config(cfg['data'], dataset_name)
                     if dataset is None:
                         logger.error(f'Dataset {dataset_name} is not valid, will be skipped. ')
@@ -313,7 +356,7 @@ def main():
                     if WORLD_SIZE > 1:
                         if RANK == 0:
                             dataset = build_dataset(dataset_name, **dataset_kwargs)
-                        dist.barrier()
+                        barrier()
 
                     dataset = build_dataset(dataset_name, **dataset_kwargs)
                     if dataset is None:
@@ -330,7 +373,7 @@ def main():
                     )
 
                 if WORLD_SIZE > 1:
-                    dist.barrier()
+                    barrier()
 
                 if model is None:
                     model = model_name  # which is only a name
@@ -438,7 +481,7 @@ def main():
                     logger.info(judge_kwargs)
 
                 if WORLD_SIZE > 1:
-                    dist.barrier()
+                    barrier()
 
                 # Only RANK 0 handles the evaluation part
                 if RANK == 0:
@@ -549,7 +592,7 @@ def main():
                             f'{elapsed_min:.2f} min ({bench_elapsed:.1f}s)\n'
                         )
 
-    if WORLD_SIZE > 1:
+    if WORLD_SIZE > 1 and dist is not None:
         dist.destroy_process_group()
 
 

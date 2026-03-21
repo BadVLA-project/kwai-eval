@@ -203,18 +203,15 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             )
             print(f'[vLLM init] Removed torchrun env vars: {list(_dist_env_backup.keys())}', flush=True)
 
-            # ── Critical fix: destroy the gloo process group ──
-            # vLLM checks torch.distributed.is_initialized() internally.
-            # If it finds an existing group (our gloo group with world_size=2),
-            # it tries to use it for coordination, causing a deadlock since
-            # both ranks are inside LLM() simultaneously.
+            # ── Destroy gloo process group if it exists ──
+            # Only relevant when launched via torchrun (not launch_workers.py).
             _had_dist = _dist.is_initialized()
             _dist_rank = _dist.get_rank() if _had_dist else 0
             _dist_world_size = _dist.get_world_size() if _had_dist else 1
             if _had_dist:
                 print(f'[vLLM init] Destroying gloo process group '
                       f'(rank={_dist_rank}, world_size={_dist_world_size})', flush=True)
-                _dist.barrier()  # sync so both ranks destroy together
+                _dist.barrier()
                 _dist.destroy_process_group()
 
             # Belt-and-suspenders: monkey-patch is_initialized to return False
@@ -226,28 +223,17 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             print(f'[vLLM init] Creating vllm.LLM() ...', flush=True)
 
             try:
-                # Serialize LLM() creation across ranks via file lock.
-                # vLLM V1 EngineCore uses ZMQ/shared-memory IPC that can
-                # conflict when multiple instances initialize simultaneously.
-                # The lock ONLY covers LLM() — gloo re-init is outside so
-                # all ranks can reach init_process_group together.
-                import fcntl, tempfile as _tmpmod
-                _lock_path = os.path.join(_tmpmod.gettempdir(), 'vllm_eval_init.lock')
-                with open(_lock_path, 'w') as _lf:
-                    fcntl.flock(_lf, fcntl.LOCK_EX)
-                    print(f'[vLLM init] Acquired init lock (rank={_dist_rank})', flush=True)
-                    self.llm = LLM(
-                        model=self.model_path,
-                        max_num_seqs=max_num_seqs,
-                        tensor_parallel_size=tp_size,
-                        enable_expert_parallel=enable_expert_parallel,
-                        seed=0,
-                        max_model_len=32768,
-                        enforce_eager=True,
-                        gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
-                        trust_remote_code=True,
-                    )
-                # Lock released here (file closed).
+                self.llm = LLM(
+                    model=self.model_path,
+                    max_num_seqs=max_num_seqs,
+                    tensor_parallel_size=tp_size,
+                    enable_expert_parallel=enable_expert_parallel,
+                    seed=0,
+                    max_model_len=32768,
+                    enforce_eager=True,
+                    gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
+                    trust_remote_code=True,
+                )
                 print(f'[vLLM init] LLM() created successfully, pid={os.getpid()}', flush=True)
             except Exception as _e:
                 print(f'[vLLM init] LLM() FAILED: {_e}', file=sys.stderr, flush=True)
@@ -260,12 +246,10 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 print(f'[vLLM init] Restored torchrun env vars: {list(_dist_env_backup.keys())}', flush=True)
 
             # Re-create the gloo process group for subsequent barrier() calls.
-            # This is OUTSIDE the file lock so all ranks can reach
-            # init_process_group concurrently (it's a collective op that
-            # needs all ranks to join).  The gloo timeout (default 3600s)
-            # is large enough to cover the time rank 1 spends waiting for
-            # the lock + creating its own LLM().
-            if _had_dist:
+            # This is only needed when launched via torchrun.  When using
+            # launch_workers.py (VLMEVAL_BARRIER_DIR is set), there is no
+            # torch.distributed group to restore.
+            if _had_dist and not os.environ.get('VLMEVAL_BARRIER_DIR'):
                 print('[vLLM init] Re-initializing gloo process group ...', flush=True)
                 import datetime as _dt
                 _master_addr = _dist_env_backup.get('MASTER_ADDR', '127.0.0.1')
