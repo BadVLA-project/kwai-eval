@@ -314,6 +314,11 @@ def main():
             dist.barrier()
 
     for _, model_name in enumerate(args.model):
+        # Clean up previous model's vLLM engine to free GPU memory before
+        # initializing the next model.  Without this, the EngineCore subprocess
+        # from the previous model still holds VRAM and the new LLM() OOMs.
+        if model is not None and hasattr(model, 'cleanup_vllm'):
+            model.cleanup_vllm()
         model = None
         date, commit_id = timestr('day'), githash(digits=8)
         eval_id = f"T{date}_G{commit_id}"
@@ -494,7 +499,7 @@ def main():
                 if RANK == 0:
                     logger.info(judge_kwargs)
 
-                if WORLD_SIZE > 1:
+                if WORLD_SIZE > 1 and args.mode != 'infer':
                     barrier()
 
                 # Only RANK 0 handles the evaluation part

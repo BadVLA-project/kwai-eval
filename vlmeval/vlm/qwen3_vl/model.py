@@ -276,6 +276,28 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
 
         torch.cuda.empty_cache()
 
+    def cleanup_vllm(self):
+        """Explicitly shut down the vLLM engine and free GPU memory.
+
+        Must be called before creating a new model on the same GPU,
+        because vLLM's EngineCore subprocess holds GPU memory independently.
+        """
+        if not getattr(self, 'use_vllm', False) or not hasattr(self, 'llm'):
+            return
+        import gc
+        # vLLM v1 LLM wraps an LLMEngine that wraps an EngineCoreClient.
+        # Deleting the LLM triggers __del__ chains that terminate subprocesses.
+        try:
+            del self.llm
+        except Exception:
+            pass
+        self.llm = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        # Give the EngineCore subprocess a moment to terminate.
+        import time as _time
+        _time.sleep(1)
+
     def _prepare_content(self, inputs: list[dict[str, str]], dataset: str | None = None) -> list[dict[str, str]]:
         content = []
         for s in inputs:
