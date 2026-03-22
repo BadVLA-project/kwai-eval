@@ -313,6 +313,7 @@ def main():
         elif dist is not None:
             dist.barrier()
 
+    model = None
     for _, model_name in enumerate(args.model):
         # Clean up previous model's vLLM engine to free GPU memory before
         # initializing the next model.  Without this, the EngineCore subprocess
