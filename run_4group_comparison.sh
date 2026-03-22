@@ -18,6 +18,9 @@ set -x
 # ---------------------------------------------------------------------------
 # Environment setup (same as run_vllm.sh)
 # ---------------------------------------------------------------------------
+# Force unbuffered Python output so logs appear in real-time through tee.
+export PYTHONUNBUFFERED=1
+
 export TORCH_COMPILE_DISABLE=1
 export VLLM_HOST_IP=127.0.0.1
 
@@ -66,7 +69,7 @@ export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
 # Datasets & Model
 # ---------------------------------------------------------------------------
 DATASETS=(
-  MLVU_64frame
+  MLVU_MCQ_64frame
   Video_Holmes_64frame
   AoTBench_ReverseFilm_16frame
   AoTBench_UCF101_16frame

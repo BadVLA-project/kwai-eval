@@ -67,6 +67,8 @@ def main() -> None:
         env["LOCAL_WORLD_SIZE"] = str(ngpu)
         env["CUDA_VISIBLE_DEVICES"] = str(rank)
         env["VLMEVAL_BARRIER_DIR"] = barrier_dir
+        # Force unbuffered Python output for real-time logging.
+        env["PYTHONUNBUFFERED"] = "1"
 
         # Remove torchrun vars that might linger from a parent script.
         for k in ("MASTER_ADDR", "MASTER_PORT", "GROUP_RANK",

@@ -61,7 +61,8 @@ longvideobench_dataset = {
 mlvu_dataset = {
     'MLVU_8frame': partial(MLVU, dataset='MLVU', nframe=8),
     'MLVU_64frame': partial(MLVU, dataset='MLVU', nframe=64),
-    'MLVU_1fps': partial(MLVU, dataset='MLVU', fps=1.0)
+    'MLVU_1fps': partial(MLVU, dataset='MLVU', fps=1.0),
+    'MLVU_MCQ_64frame': partial(MLVU_MCQ, dataset='MLVU_MCQ', nframe=64),
 }
 
 tempcompass_dataset = {
