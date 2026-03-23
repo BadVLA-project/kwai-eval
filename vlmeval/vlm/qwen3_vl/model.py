@@ -117,19 +117,35 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.post_process = post_process
 
         # USE_COT env var allows runtime override without changing config entries.
-        use_cot = use_cot or os.environ.get('USE_COT', '0') == '1'
+        # USE_COT=0 (default) : no CoT prompt
+        # USE_COT=1 or USE_COT=boxed : boxed{} format — model decides to think or not
+        # USE_COT=tags : legacy <think>/<answer> tag format
+        env_cot = os.environ.get('USE_COT', '0')
+        use_cot = use_cot or env_cot not in ('0', '')
+        cot_format = 'tags' if env_cot == 'tags' else 'boxed'  # default to boxed
+
         if use_cot:
             self.temperature = 0.7
             self.do_sample = True
             self.max_new_tokens = 2048
-            self.post_prompt = (
-                'Please think step by step inside <think> tags, '
-                'then provide the final answer inside <answer> tags.'
-            )
-            self.extract_think_answer = True
             self.generate_kwargs.update(
                 temperature=0.7, do_sample=True, max_new_tokens=2048
             )
+            if cot_format == 'tags':
+                self.post_prompt = (
+                    'Please think step by step inside <think> tags, '
+                    'then provide the final answer inside <answer> tags.'
+                )
+                self.extract_think_answer = True
+                self.post_process = False
+            else:
+                # boxed format: model self-determines whether to reason
+                self.post_prompt = (
+                    'Please put your final answer in \\boxed{} format, '
+                    'e.g. \\boxed{A}.'
+                )
+                self.extract_think_answer = False
+                self.post_process = True
         else:
             self.post_prompt = None
             self.extract_think_answer = False

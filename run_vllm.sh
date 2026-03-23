@@ -10,9 +10,11 @@ set -x
 # process with a dedicated vLLM engine.
 #
 # Usage:
-#   bash run_vllm.sh                  # run both CoT + No-CoT
-#   USE_COT=1 bash run_vllm.sh       # CoT only
-#   USE_COT=0 bash run_vllm.sh       # No-CoT only
+#   bash run_vllm.sh                    # run both CoT (boxed) + No-CoT
+#   USE_COT=1 bash run_vllm.sh         # CoT only (boxed format, model decides to think)
+#   USE_COT=boxed bash run_vllm.sh     # same as USE_COT=1
+#   USE_COT=tags bash run_vllm.sh      # CoT with <think>/<answer> tags (legacy)
+#   USE_COT=0 bash run_vllm.sh         # No-CoT only
 # ==========================================================================
 
 # Disable torch compile to avoid startup overhead.
@@ -135,10 +137,10 @@ if [ -z "${USE_COT:-}" ]; then
 elif [ "${USE_COT}" = "0" ]; then
   echo "=== No-CoT only (greedy, temperature=0) ==="
   run_eval 0 "${WORK_DIR_BASE}/evaluation_vllm_noCoT"
-elif [ "${USE_COT}" = "1" ]; then
-  echo "=== CoT only (sampling, temperature=0.7) ==="
-  run_eval 1 "${WORK_DIR_BASE}/evaluation_vllm_CoT"
+elif [ "${USE_COT}" = "1" ] || [ "${USE_COT}" = "boxed" ] || [ "${USE_COT}" = "tags" ]; then
+  echo "=== CoT only (sampling, temperature=0.7, format=${USE_COT}) ==="
+  run_eval "${USE_COT}" "${WORK_DIR_BASE}/evaluation_vllm_CoT"
 else
-  echo "ERROR: USE_COT must be 0, 1, or unset (for both). Got: ${USE_COT}" >&2
+  echo "ERROR: USE_COT must be 0, 1, boxed, tags, or unset (for both). Got: ${USE_COT}" >&2
   exit 1
 fi
