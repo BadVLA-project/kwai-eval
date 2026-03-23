@@ -62,7 +62,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         use_cot: bool = False,
         verbose: bool = False,
         use_audio_in_video: bool = True,
-        use_frame_cache: bool = True,
+        use_frame_cache: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(use_custom_prompt=use_custom_prompt)
@@ -120,7 +120,6 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.nframe = kwargs.pop('nframe', 128)
         self.FRAME_FACTOR = 2
         self.use_audio_in_video = use_audio_in_video
-        self.use_frame_cache = use_frame_cache
 
         assert model_path is not None
         self.model_path = model_path
@@ -308,96 +307,6 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         import time as _time
         _time.sleep(1)
 
-    def _cache_video_frames(self, video_path: str) -> tuple[list[str], float] | None:
-        """Extract and cache video frames based on model's fps/nframe config.
-
-        Returns a tuple of (cached frame file paths, effective_fps), or None on failure.
-        """
-        import hashlib
-        import json
-        import os.path as osp
-        import numpy as np
-        from PIL import Image
-        import portalocker
-
-        from ...smp import LMUDataRoot
-
-        # Build cache directory: {LMUDataRoot}/model_frame_cache/fps{fps}_nf{nframe}/{video_hash}/
-        lmu_root = LMUDataRoot()
-        config_id = f'fps{self.fps or 0}_nf{self.nframe or 0}'
-        video_hash = hashlib.md5(video_path.encode()).hexdigest()
-        cache_dir = osp.join(lmu_root, 'model_frame_cache', config_id, video_hash)
-        os.makedirs(cache_dir, exist_ok=True)
-
-        meta_path = osp.join(cache_dir, 'meta.json')
-
-        # Check cache hit via meta.json
-        if osp.exists(meta_path):
-            with open(meta_path, 'r') as f:
-                meta = json.load(f)
-            frame_paths = [osp.join(cache_dir, fn) for fn in meta['frame_files']]
-            if all(osp.exists(p) for p in frame_paths):
-                return frame_paths, meta['effective_fps']
-
-        # Determine frame count and indices using the same logic as _prepare_content
-        import decord
-        vid = decord.VideoReader(video_path)
-        total_frames = len(vid)
-        video_fps = vid.get_avg_fps()
-        total_duration = total_frames / video_fps
-
-        if self.fps is not None:
-            num_frames = int(total_duration * self.fps)
-            step_size = video_fps / self.fps
-            indices = [int(i * step_size) for i in range(num_frames)]
-            # Clamp indices to valid range
-            indices = [min(i, total_frames - 1) for i in indices]
-        elif self.nframe is not None:
-            if total_frames < self.nframe:
-                num_frames = total_frames // self.FRAME_FACTOR * self.FRAME_FACTOR
-            else:
-                num_frames = self.nframe
-            step_size = total_frames / (num_frames + 1)
-            indices = [int(i * step_size) for i in range(1, num_frames + 1)]
-        else:
-            return None
-
-        actual_nframes = len(indices)
-        effective_fps = actual_nframes / total_duration if total_duration > 0 else 1.0
-        frame_tmpl = 'frame-{}-of-{}.jpg'
-        frame_files = [frame_tmpl.format(i + 1, actual_nframes) for i in range(actual_nframes)]
-        frame_paths = [osp.join(cache_dir, fn) for fn in frame_files]
-
-        # Cache miss: decode and save with file lock
-        lock_path = osp.join(cache_dir, '.lock')
-        with portalocker.Lock(lock_path, 'w', timeout=60):
-            # Double-check after acquiring lock
-            if osp.exists(meta_path):
-                with open(meta_path, 'r') as f:
-                    meta = json.load(f)
-                cached_paths = [osp.join(cache_dir, fn) for fn in meta['frame_files']]
-                if all(osp.exists(p) for p in cached_paths):
-                    return cached_paths, meta['effective_fps']
-
-            images = [vid[i].asnumpy() for i in indices]
-            for arr, pth in zip(images, frame_paths):
-                if not osp.exists(pth):
-                    Image.fromarray(arr).save(pth, format='JPEG', quality=95)
-
-            # Save metadata
-            meta = {
-                'effective_fps': effective_fps,
-                'nframes': actual_nframes,
-                'total_duration': total_duration,
-                'video_fps': video_fps,
-                'total_frames': total_frames,
-                'frame_files': frame_files,
-            }
-            with open(meta_path, 'w') as f:
-                json.dump(meta, f)
-
-        return frame_paths, effective_fps
-
     def _prepare_content(self, inputs: list[dict[str, str]], dataset: str | None = None) -> list[dict[str, str]]:
         content = []
         for s in inputs:
@@ -420,20 +329,11 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                         item[key] = s[key]
             elif s['type'] == 'video':
                 value = s['value']
-                cached_effective_fps = None
-                # Try to use cached frames for single video paths
-                if not isinstance(value, list) and self.use_frame_cache:
-                    cache_result = self._cache_video_frames(value)
-                    if cache_result:
-                        value, cached_effective_fps = cache_result
                 if isinstance(value, list):
                     item = {
                         'type': 'video',
                         'video': [ensure_image_url(v) for v in value],
                     }
-                    # Set effective fps so Qwen processor computes correct temporal positions
-                    if cached_effective_fps is not None:
-                        item['fps'] = cached_effective_fps
                 else:
                     item = {'type': 'video', 'video': ensure_video_url(value)}
                 if self.min_pixels is not None:
