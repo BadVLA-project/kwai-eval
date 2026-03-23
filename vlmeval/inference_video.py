@@ -179,15 +179,25 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     # batched llm.generate() call to saturate all tensor-parallel GPUs.
     # ------------------------------------------------------------------
     if getattr(model, 'use_vllm', False) and hasattr(model, 'generate_batch_vllm'):
-        # Sync nframe / fps once before building prompts
+        # Sync nframe / fps once before building prompts (match non-vLLM path logic)
         if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
-            if dataset.nframe > 0 and getattr(model, 'nframe', 0) != dataset.nframe:
-                print(f'{model_name} nframe -> {dataset.nframe}')
-                setattr(model, 'nframe', dataset.nframe)
+            if dataset.nframe > 0:
+                if getattr(model, 'nframe', 0) != dataset.nframe:
+                    print(f'{model_name} nframe -> {dataset.nframe}')
+                    setattr(model, 'nframe', dataset.nframe)
+            elif getattr(model, 'fps', 0) == 0:
+                raise ValueError(f'fps is not suitable for {model_name}')
+            else:
+                setattr(model, 'nframe', None)
         if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
-            if dataset.fps > 0 and getattr(model, 'fps', 0) != dataset.fps:
-                print(f'{model_name} fps -> {dataset.fps}')
-                setattr(model, 'fps', dataset.fps)
+            if dataset.fps > 0:
+                if getattr(model, 'fps', 0) != dataset.fps:
+                    print(f'{model_name} fps -> {dataset.fps}')
+                    setattr(model, 'fps', dataset.fps)
+            elif getattr(model, 'nframe', 0) == 0:
+                raise ValueError(f'nframe is not suitable for {model_name}')
+            else:
+                setattr(model, 'fps', None)
 
         batch_indices, batch_structs = [], []
         for idx in tqdm(sample_indices_subrem, desc=f'Build prompts {model_name}/{dataset_name}'):
@@ -251,15 +261,25 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         and (_has_batch_tokens or _torch_bs > 1)
         and hasattr(model, 'generate_batch_transformers')
     ):
-        # Sync nframe / fps once before building prompts
+        # Sync nframe / fps once before building prompts (match non-vLLM path logic)
         if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
-            if dataset.nframe > 0 and getattr(model, 'nframe', 0) != dataset.nframe:
-                print(f'{model_name} nframe -> {dataset.nframe}')
-                setattr(model, 'nframe', dataset.nframe)
+            if dataset.nframe > 0:
+                if getattr(model, 'nframe', 0) != dataset.nframe:
+                    print(f'{model_name} nframe -> {dataset.nframe}')
+                    setattr(model, 'nframe', dataset.nframe)
+            elif getattr(model, 'fps', 0) == 0:
+                raise ValueError(f'fps is not suitable for {model_name}')
+            else:
+                setattr(model, 'nframe', None)
         if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
-            if dataset.fps > 0 and getattr(model, 'fps', 0) != dataset.fps:
-                print(f'{model_name} fps -> {dataset.fps}')
-                setattr(model, 'fps', dataset.fps)
+            if dataset.fps > 0:
+                if getattr(model, 'fps', 0) != dataset.fps:
+                    print(f'{model_name} fps -> {dataset.fps}')
+                    setattr(model, 'fps', dataset.fps)
+            elif getattr(model, 'nframe', 0) == 0:
+                raise ValueError(f'nframe is not suitable for {model_name}')
+            else:
+                setattr(model, 'fps', None)
 
         batch_indices, batch_structs = [], []
         for idx in tqdm(sample_indices_subrem, desc=f'Build prompts {model_name}/{dataset_name}'):
