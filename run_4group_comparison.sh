@@ -69,7 +69,6 @@ export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
 # Datasets & Model
 # ---------------------------------------------------------------------------
 DATASETS=(
-  MLVU_MCQ_64frame
   Video_Holmes_64frame
   AoTBench_ReverseFilm_16frame
   AoTBench_UCF101_16frame
@@ -80,7 +79,7 @@ DATASETS=(
   CharadesTimeLens_1fps
   MVBench_MP4_1fps
   PerceptionTest_val_16frame
-  Video-MME_64frame
+  Video-MME_64frame_short_medium
 )
 
 MODEL=Qwen3-VL-4B-Instruct

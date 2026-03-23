@@ -36,6 +36,7 @@ tamperbench_dataset = {
 videomme_dataset = {
     'Video-MME_8frame': partial(VideoMME, dataset='Video-MME', nframe=8),
     'Video-MME_64frame': partial(VideoMME, dataset='Video-MME', nframe=64),
+    'Video-MME_64frame_short_medium': partial(VideoMME, dataset='Video-MME', nframe=64, durations=['short', 'medium']),
     'Video-MME_8frame_subs': partial(VideoMME, dataset='Video-MME', nframe=8, use_subtitle=True),
     'Video-MME_1fps': partial(VideoMME, dataset='Video-MME', fps=1.0),
     'Video-MME_0.5fps': partial(VideoMME, dataset='Video-MME', fps=0.5),
