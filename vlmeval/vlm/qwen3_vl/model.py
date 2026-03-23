@@ -62,6 +62,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         use_cot: bool = False,
         verbose: bool = False,
         use_audio_in_video: bool = True,
+        use_frame_cache: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(use_custom_prompt=use_custom_prompt)
@@ -119,6 +120,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.nframe = kwargs.pop('nframe', 128)
         self.FRAME_FACTOR = 2
         self.use_audio_in_video = use_audio_in_video
+        self.use_frame_cache = use_frame_cache
 
         assert model_path is not None
         self.model_path = model_path
@@ -306,6 +308,71 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         import time as _time
         _time.sleep(1)
 
+    def _cache_video_frames(self, video_path: str) -> list[str] | None:
+        """Extract and cache video frames based on model's fps/nframe config.
+
+        Returns a list of cached frame file paths, or None on failure.
+        """
+        import hashlib
+        import os.path as osp
+        import numpy as np
+        from PIL import Image
+        import portalocker
+
+        from ...smp import LMUDataRoot
+
+        # Build cache directory: {LMUDataRoot}/model_frame_cache/fps{fps}_nf{nframe}/{video_hash}/
+        lmu_root = LMUDataRoot()
+        config_id = f'fps{self.fps}_nf{self.nframe}'
+        video_hash = hashlib.md5(video_path.encode()).hexdigest()
+        cache_dir = osp.join(lmu_root, 'model_frame_cache', config_id, video_hash)
+        os.makedirs(cache_dir, exist_ok=True)
+
+        # Determine frame count and indices using the same logic as _prepare_content
+        import decord
+        vid = decord.VideoReader(video_path)
+        total_frames = len(vid)
+        video_fps = vid.get_avg_fps()
+
+        if self.fps is not None:
+            total_duration = total_frames / video_fps
+            num_frames = int(total_duration * self.fps)
+            step_size = video_fps / self.fps
+            indices = [int(i * step_size) for i in range(num_frames)]
+            # Clamp indices to valid range
+            indices = [min(i, total_frames - 1) for i in indices]
+        elif self.nframe is not None:
+            if total_frames < self.nframe:
+                num_frames = total_frames // self.FRAME_FACTOR * self.FRAME_FACTOR
+            else:
+                num_frames = self.nframe
+            step_size = total_frames / (num_frames + 1)
+            indices = [int(i * step_size) for i in range(1, num_frames + 1)]
+        else:
+            return None
+
+        actual_nframes = len(indices)
+        frame_tmpl = 'frame-{}-of-{}.jpg'
+        frame_paths = [osp.join(cache_dir, frame_tmpl.format(i + 1, actual_nframes))
+                       for i in range(actual_nframes)]
+
+        # Check cache hit
+        if all(osp.exists(p) for p in frame_paths):
+            return frame_paths
+
+        # Cache miss: decode and save with file lock
+        lock_path = osp.join(cache_dir, '.lock')
+        with portalocker.Lock(lock_path, 'w', timeout=60):
+            # Double-check after acquiring lock
+            if all(osp.exists(p) for p in frame_paths):
+                return frame_paths
+            images = [vid[i].asnumpy() for i in indices]
+            for idx, (arr, pth) in enumerate(zip(images, frame_paths)):
+                if not osp.exists(pth):
+                    Image.fromarray(arr).save(pth, format='JPEG', quality=95)
+
+        return frame_paths
+
     def _prepare_content(self, inputs: list[dict[str, str]], dataset: str | None = None) -> list[dict[str, str]]:
         content = []
         for s in inputs:
@@ -328,6 +395,11 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                         item[key] = s[key]
             elif s['type'] == 'video':
                 value = s['value']
+                # Try to use cached frames for single video paths
+                if not isinstance(value, list) and self.use_frame_cache:
+                    cached_frames = self._cache_video_frames(value)
+                    if cached_frames:
+                        value = cached_frames
                 if isinstance(value, list):
                     item = {
                         'type': 'video',

@@ -50,10 +50,14 @@ Respond with only the letter (A, B, C, or D) of the correct option.
     TYPE = 'Video-MCQ'
     DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
-    def __init__(self, dataset='Video-MME', use_subtitle=False, nframe=0, fps=-1):
+    def __init__(self, dataset='Video-MME', use_subtitle=False, nframe=0, fps=-1, durations=None):
         super().__init__(dataset=dataset, nframe=nframe, fps=fps)
         self.use_subtitle = use_subtitle
         self.dataset_name = dataset
+        if durations is not None:
+            self.data = self.data[self.data['duration'].isin(durations)]
+            self.data = self.data.reset_index(drop=True)
+            self.videos = sorted(list(set(self.data['video'])))
 
     @classmethod
     def supported_datasets(cls):
