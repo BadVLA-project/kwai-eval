@@ -36,7 +36,7 @@ export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
-REUSE="${REUSE:-0}"
+REUSE="${REUSE:-1}"
 NGPU="${NGPU:-$(python -c 'import torch; print(torch.cuda.device_count())')}"
 DELAY="${DELAY:-15}"
 
@@ -63,7 +63,7 @@ export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 # ---------------------------------------------------------------------------
 export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-32}"
 export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-64}"
-export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.7}"
 
 # ---------------------------------------------------------------------------
 # Datasets & Model
