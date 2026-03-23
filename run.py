@@ -283,6 +283,19 @@ def main():
                 raise RuntimeError(f'file_barrier timeout (tag={tag}, rank={RANK})')
             _time.sleep(0.5)
 
+    def file_barrier_skip():
+        """Increment barrier counter and write flag without waiting.
+
+        Used during error recovery to unblock other ranks and keep the
+        monotonic barrier counter in sync across all ranks.
+        """
+        nonlocal _barrier_counter
+        tag = _barrier_counter
+        _barrier_counter += 1
+        flag = osp.join(_barrier_dir, f'barrier_{tag}_rank{RANK}')
+        with open(flag, 'w') as f:
+            f.write('1')
+
     dist = None  # will be set only when using torch.distributed
     if WORLD_SIZE > 1:
         if _use_file_barrier:
@@ -345,6 +358,18 @@ def main():
             bench_start_time = time.time()
             # Per model x dataset log file capturing all warnings/errors from
             # every layer (model.py, inference_video.py, etc.).
+            # Track barrier calls inside the try block so we can catch up
+            # on missed barriers in the finally block if an exception or
+            # early 'continue' causes us to skip some.
+            _inner_barriers_called = 0
+            # Expected barrier() calls per iteration when WORLD_SIZE > 1:
+            #   1. After dataset build (line ~365/379)
+            #   2. After reuse-file preparation (line ~396)
+            #   3. Before evaluation (line ~504) — only if mode != 'infer'
+            _inner_barriers_expected = (
+                (3 if args.mode != 'infer' else 2) if WORLD_SIZE > 1 else 0
+            )
+
             _bench_log_handler = None
             try:
                 log_dir = osp.join(pred_root, 'logs')
@@ -363,6 +388,7 @@ def main():
                         if RANK == 0:
                             dataset = build_dataset_from_config(cfg['data'], dataset_name)
                         barrier()
+                        _inner_barriers_called += 1
                     dataset = build_dataset_from_config(cfg['data'], dataset_name)
                     if dataset is None:
                         logger.error(f'Dataset {dataset_name} is not valid, will be skipped. ')
@@ -377,6 +403,7 @@ def main():
                         if RANK == 0:
                             dataset = build_dataset(dataset_name, **dataset_kwargs)
                         barrier()
+                        _inner_barriers_called += 1
 
                     dataset = build_dataset(dataset_name, **dataset_kwargs)
                     if dataset is None:
@@ -394,6 +421,7 @@ def main():
 
                 if WORLD_SIZE > 1:
                     barrier()
+                    _inner_barriers_called += 1
 
                 if model is None:
                     model = model_name  # which is only a name
@@ -502,6 +530,7 @@ def main():
 
                 if WORLD_SIZE > 1 and args.mode != 'infer':
                     barrier()
+                    _inner_barriers_called += 1
 
                 # Only RANK 0 handles the evaluation part
                 if RANK == 0:
@@ -597,6 +626,21 @@ def main():
                                  'skipping this combination.')
                 continue
             finally:
+                # Catch up on missed barriers to keep the monotonic counter
+                # in sync across all ranks.  When an exception or early
+                # 'continue' causes this rank to skip barrier() calls, we
+                # still write the flag files (without waiting) so that:
+                #   a) other ranks blocked at those barriers can proceed, and
+                #   b) our _barrier_counter matches every other rank's counter
+                #      for subsequent datasets.
+                if _use_file_barrier and _inner_barriers_called < _inner_barriers_expected:
+                    skipped = _inner_barriers_expected - _inner_barriers_called
+                    logger.warning(
+                        f'[BarrierSync] Rank {RANK} skipped {skipped} inner barrier(s) '
+                        f'for {dataset_name}, writing catch-up flags.'
+                    )
+                    for _ in range(skipped):
+                        file_barrier_skip()
                 # Remove per-bench log handler
                 if _bench_log_handler is not None:
                     logging.getLogger().removeHandler(_bench_log_handler)
