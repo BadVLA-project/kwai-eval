@@ -346,6 +346,9 @@ class MLVU_MCQ(VideoBaseDataset):
             )
 
             dump(data, score_file)
+            # Also save JSONL for easy server-side viewing
+            jsonl_file = score_file.rsplit('.', 1)[0] + '.jsonl'
+            dump(data, jsonl_file)
 
         rating = get_dimension_rating(score_file)
         return rating
@@ -599,6 +602,9 @@ class MLVU_OpenEnded(VideoBaseDataset):
             ans = load(tmp_file)
             data = MLVU_OpenEnded_extract(ans, data)
             dump(data, score_file)
+            # Also save JSONL for easy server-side viewing
+            jsonl_file = score_file.rsplit('.', 1)[0] + '.jsonl'
+            dump(data, jsonl_file)
 
         rating = get_dimension_rating(score_file)
         return rating

@@ -292,24 +292,36 @@ Respond with only the letter (A, B, C, or D) of the correct option.
             res = {} if not osp.exists(tmp_file) else load(tmp_file)
             res = {k: v for k, v in res.items() if FAIL_MSG not in v}
 
+            from vlmeval.utils.matching_util import extract_answer_from_cot
+
             data = load(eval_file)
             data_un = data[~pd.isna(data['prediction'])]
 
+            unparsed_count = 0
             for idx in data['index']:
                 ans = data.loc[data['index'] == idx, 'answer'].values[0]
                 pred = str(data.loc[data['index'] == idx, 'prediction'].values[0])
 
-                if extract_characters_regex(pred) == '':
+                extract_pred = extract_characters_regex(pred)
+                if extract_pred == '':
+                    # Fallback: try robust CoT answer extraction before resorting to GPT judge
+                    extract_pred = extract_answer_from_cot(pred)
+                if extract_pred == '':
+                    # Final fallback: GPT judge or random
                     extract_pred = extract_option(
                         model,
                         data.loc[data['index'] == idx].to_dict(orient='records')[0],
                         'Video-MME'
                     )
-                    data.loc[data['index'] == idx, 'score'] = int(extract_pred == ans)
-                else:
-                    data.loc[data['index'] == idx, 'score'] = int(extract_characters_regex(pred) == ans)
+                    if not extract_pred:
+                        unparsed_count += 1
+                data.loc[data['index'] == idx, 'extracted_answer'] = extract_pred
+                data.loc[data['index'] == idx, 'score'] = int(extract_pred == ans)
 
             rejected = [x for x in data['score'] if x == -1]
+
+            if unparsed_count > 0:
+                print(f'[Video-MME] WARNING: Failed to parse answer for {unparsed_count}/{len(data)} samples')
 
             print(
                 f'Among {len(data)} questions, failed to obtain prediction for {len(data) - len(data_un)} questions, '
@@ -318,6 +330,9 @@ Respond with only the letter (A, B, C, or D) of the correct option.
             )
 
             dump(data, score_file)
+            # Also save JSONL for easy server-side viewing
+            jsonl_file = score_file.rsplit('.', 1)[0] + '.jsonl'
+            dump(data, jsonl_file)
 
         rating = get_dimension_rating(score_file)
         dump(rating, tgt_file)

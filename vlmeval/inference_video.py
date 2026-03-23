@@ -10,6 +10,28 @@ from vlmeval.smp import *
 FAIL_MSG = 'Failed to obtain answer via API.'
 
 
+def _extract_prompt_text(struct):
+    """Extract text portions from a prompt message list for logging.
+
+    Args:
+        struct: list of dicts with 'type'/'value' keys (the prompt message format)
+
+    Returns:
+        A string containing all text parts joined by newline, with media items
+        replaced by placeholders like [image] or [video].
+    """
+    parts = []
+    for item in struct:
+        t = item.get('type', '')
+        if t == 'text':
+            parts.append(item.get('value', ''))
+        elif t == 'image':
+            parts.append('[image]')
+        elif t == 'video':
+            parts.append('[video]')
+    return '\n'.join(parts)
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, nargs='+', required=True)
@@ -82,6 +104,9 @@ def infer_data_api(model, work_dir, model_name, dataset, samples_dict={}, api_np
 
 def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, api_nproc=4, use_vllm=False):
     res = load(out_file) if osp.exists(out_file) else {}
+    # Prompt text log: saved alongside predictions for debugging / xlsx output
+    prompts_file = out_file.rsplit('.', 1)[0] + '_prompts.pkl'
+    prompts_dict = load(prompts_file) if osp.exists(prompts_file) else {}
     rank, world_size = get_rank_and_world_size()
     dataset_name = dataset.dataset_name
     skip_err = os.environ.get('SKIP_ERR', '0') == '1'
@@ -224,6 +249,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                 continue
             batch_indices.append(idx)
             batch_structs.append(struct)
+            prompts_dict[idx] = _extract_prompt_text(struct)
 
         if batch_structs:
             chunk_size = int(os.environ.get('VLLM_BATCH_CHUNK_SIZE', '32'))
@@ -245,6 +271,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
 
         res = {k: res[k] for k in sample_indices_sub}
         dump(res, out_file)
+        dump(prompts_dict, prompts_file)
         return model
     # ------------------------------------------------------------------
 
@@ -306,6 +333,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                 continue
             batch_indices.append(idx)
             batch_structs.append(struct)
+            prompts_dict[idx] = _extract_prompt_text(struct)
 
         if batch_structs:
             responses = model.generate_batch_transformers(
@@ -317,6 +345,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
 
         res = {k: res[k] for k in sample_indices_sub}
         dump(res, out_file)
+        dump(prompts_dict, prompts_file)
         return model
     # ------------------------------------------------------------------
 
@@ -383,6 +412,8 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         if struct is None:
             continue
 
+        prompts_dict[idx] = _extract_prompt_text(struct)
+
         # Print the first batch prompt for sanity check
         if i == 0 and rank == 0:
             print('\n' + '=' * 60)
@@ -420,6 +451,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
 
     res = {k: res[k] for k in sample_indices_sub}
     dump(res, out_file)
+    dump(prompts_dict, prompts_file)
     return model
 
 
@@ -478,6 +510,16 @@ def infer_data_job_video(
         for i in range(world_size):
             data_all.update(load(tmpl.format(i)))
 
+        # Merge prompt texts from all ranks
+        prompts_tmpl = osp.join(
+            work_dir, '{}' + f'{world_size}_{osp.splitext(result_file_name)[0]}_prompts.pkl'
+        )
+        prompts_all = {}
+        for i in range(world_size):
+            pf = prompts_tmpl.format(i)
+            if osp.exists(pf):
+                prompts_all.update(load(pf))
+
         meta = dataset.data
         if dataset_name == 'MMBench-Video' and getattr(dataset, 'pack', False):
             meta, vstats = dataset.load_pack_answers(data_all)
@@ -486,10 +528,20 @@ def infer_data_job_video(
             for x in meta['index']:
                 assert x in data_all
             meta['prediction'] = [str(data_all[x]) for x in meta['index']]
+            # Add prompt text column if prompts were captured
+            if prompts_all:
+                meta['prompt'] = [prompts_all.get(x, '') for x in meta['index']]
             if 'image' in meta:
                 meta.pop('image')
 
         dump(meta, result_file)
+        # Also save JSONL for easy server-side viewing
+        jsonl_file = result_file.rsplit('.', 1)[0] + '.jsonl'
+        dump(meta, jsonl_file)
         for i in range(world_size):
             os.remove(tmpl.format(i))
+            # Clean up prompt pkl files
+            pf = prompts_tmpl.format(i)
+            if osp.exists(pf):
+                os.remove(pf)
     return model

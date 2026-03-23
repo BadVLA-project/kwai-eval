@@ -62,8 +62,14 @@ def check_ans_with_model(pred, gt, model, item, dataset_name='MVBench'):
         flag = True
     elif gt_option in pred_option:
         flag = True
-    elif extract_answer_from_item(model, item, dataset_name)['opt'] == item['answer']:
-        flag = True
+    else:
+        # Fallback: try robust CoT answer extraction before GPT judge
+        from vlmeval.utils.matching_util import extract_answer_from_cot
+        cot_answer = extract_answer_from_cot(pred)
+        if cot_answer and cot_answer == item.get('answer', ''):
+            flag = True
+        elif extract_answer_from_item(model, item, dataset_name)['opt'] == item['answer']:
+            flag = True
 
     return flag
 

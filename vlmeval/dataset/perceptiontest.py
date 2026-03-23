@@ -182,6 +182,8 @@ class PerceptionTest(VideoBaseDataset):
 
     @classmethod
     def evaluate(cls, eval_file, **judge_kwargs):
+        from vlmeval.utils.matching_util import extract_answer_from_cot
+
         data = load(eval_file)
 
         # ---- Test split: save submission (no GT answers) ----
@@ -190,8 +192,7 @@ class PerceptionTest(VideoBaseDataset):
             submission = []
             for _, row in data.iterrows():
                 pred = str(row.get('prediction', '')).strip()
-                m = re.search(r'[A-Ca-c]', pred)
-                pred_letter = m.group(0).upper() if m else ''
+                pred_letter = extract_answer_from_cot(pred, valid_options='ABC')
                 pred_id = _OPTION_LETTERS.index(pred_letter) if pred_letter in _OPTION_LETTERS else -1
                 submission.append({
                     'question_id': str(row.get('question_id', '')),
@@ -205,17 +206,25 @@ class PerceptionTest(VideoBaseDataset):
         # ---- Val split: compute accuracy ----
         score_file = get_intermediate_file_path(eval_file, '_score')
         if not osp.exists(score_file):
+            unparsed_count = 0
             for idx, row in data.iterrows():
                 pred = str(row.get('prediction', '')).strip()
-                m = re.search(r'[A-Ca-c]', pred)
-                pred_letter = m.group(0).upper() if m else ''
+                pred_letter = extract_answer_from_cot(pred, valid_options='ABC')
+                if not pred_letter:
+                    unparsed_count += 1
                 pred_id = (
                     _OPTION_LETTERS.index(pred_letter)
                     if pred_letter in _OPTION_LETTERS else -1
                 )
+                data.loc[idx, 'extracted_answer'] = pred_letter
                 data.loc[idx, 'pred_id'] = pred_id
                 data.loc[idx, 'score'] = int(pred_id == int(row.get('answer_id', -1)))
+            if unparsed_count > 0:
+                print(f'[PerceptionTest] WARNING: Failed to parse answer for {unparsed_count}/{len(data)} samples')
             dump(data, score_file)
+            # Also save JSONL for easy server-side viewing
+            jsonl_file = score_file.rsplit('.', 1)[0] + '.jsonl'
+            dump(data, jsonl_file)
         else:
             data = load(score_file)
 

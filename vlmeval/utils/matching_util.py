@@ -124,3 +124,65 @@ def can_infer_lego(answer, question_type, choices):
     else:  # multiple-choice
         copt = can_infer_option(answer, choices)  # option
     return copt if copt else can_infer_text(answer, choices)
+
+
+def extract_answer_from_cot(text, valid_options='ABCD'):
+    """Extract an answer option letter from text that may contain CoT reasoning.
+
+    Tries multiple strategies in order of reliability:
+    1. <answer>X</answer> tag
+    2. Explicit answer phrases: "Final Answer: X", "The answer is X", "答案是X", etc.
+    3. Short answer (≤ 5 chars) — likely just the option letter
+    4. Standalone option letter on the last line
+    5. Last uppercase option letter at a word boundary
+
+    Returns an uppercase letter (e.g. 'B') or '' if nothing found.
+    """
+    if not text or not isinstance(text, str):
+        return ''
+    text = text.strip()
+    if not text:
+        return ''
+    option_pat = f'[{valid_options}{valid_options.lower()}]'
+    option_upper_pat = f'[{valid_options}]'
+
+    # 1. <answer> tag
+    m = re.search(r'<answer>\s*(' + option_pat + r')\b', text, re.DOTALL)
+    if m:
+        return m.group(1).upper()
+
+    # 2. Explicit answer phrases (EN + CN)
+    answer_patterns = [
+        r'[Ff]inal\s+[Aa]nswer\s*[:：]\s*(' + option_pat + r')\b',
+        r'[Tt]he\s+(?:correct\s+)?answer\s+is\s*[:：]?\s*(' + option_pat + r')\b',
+        r'[Tt]he\s+best\s+(?:answer|option)\s+is\s*[:：]?\s*(' + option_pat + r')\b',
+        r'[Aa]nswer\s*[:：]\s*(' + option_pat + r')\b',
+        r'[Oo]ption\s*[:：]\s*(' + option_pat + r')\b',
+        r'(?:答案|选项)\s*(?:是|为|应该是|应为)\s*[:：]?\s*(' + option_pat + r')',
+        r'选\s*(' + option_pat + r')\b',
+    ]
+    for pat in answer_patterns:
+        m = re.search(pat, text)
+        if m:
+            return m.group(1).upper()
+
+    # 3. Short answer (≤ 5 chars after strip) — likely just the option letter
+    if len(text) <= 5:
+        m = re.search(option_pat, text)
+        if m:
+            return m.group(0).upper()
+
+    # 4. Check last line for a standalone option
+    last_line = text.strip().split('\n')[-1].strip()
+    # Pattern: line is just an option letter possibly with punctuation, e.g. "B", "B.", "(B)"
+    m = re.match(r'^[\s\(\[]*(' + option_pat + r')[\s\)\]\.\,;:!]*$', last_line)
+    if m:
+        return m.group(1).upper()
+
+    # 5. Last UPPERCASE option letter at a word boundary (avoids matching lowercase
+    #    letters inside normal words like "the", "based", "could")
+    matches = list(re.finditer(r'(?:^|[\s\(\[])(' + option_upper_pat + r')(?:[\.\)\]\s,;:!]|$)', text))
+    if matches:
+        return matches[-1].group(1).upper()
+
+    return ''

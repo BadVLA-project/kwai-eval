@@ -76,5 +76,8 @@ def extract_option(pred):
         else:
             predicted_answer = 'WRONG'
     else:
-        predicted_answer = 'WRONG'
+        # Fallback: try robust CoT answer extraction when <answer> tag is missing
+        from vlmeval.utils.matching_util import extract_answer_from_cot
+        fallback = extract_answer_from_cot(pred, valid_options='ABCDEF')
+        predicted_answer = fallback if fallback else 'WRONG'
     return predicted_answer

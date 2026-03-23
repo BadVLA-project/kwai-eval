@@ -177,20 +177,30 @@ class AoTBench(VideoBaseDataset):
     # ------------------------------------------------------------------ #
     @classmethod
     def evaluate(cls, eval_file, **judge_kwargs):
+        from vlmeval.utils.matching_util import extract_answer_from_cot
+
         data = load(eval_file)
         score_file = get_intermediate_file_path(eval_file, '_score')
 
         if not osp.exists(score_file):
+            unparsed_count = 0
             for idx, row in data.iterrows():
                 pred = str(row.get('prediction', '')).strip()
                 ans = str(row.get('answer', '')).strip().upper()
                 if not ans or not pred:
                     data.loc[idx, 'score'] = -1
                     continue
-                m = re.search(r'[A-Za-z]', pred)
-                pred_letter = m.group(0).upper() if m else ''
+                pred_letter = extract_answer_from_cot(pred)
+                if not pred_letter:
+                    unparsed_count += 1
+                data.loc[idx, 'extracted_answer'] = pred_letter
                 data.loc[idx, 'score'] = int(pred_letter == ans)
+            if unparsed_count > 0:
+                print(f'[AoTBench] WARNING: Failed to parse answer for {unparsed_count}/{len(data)} samples')
             dump(data, score_file)
+            # Also save JSONL for easy server-side viewing
+            jsonl_file = score_file.rsplit('.', 1)[0] + '.jsonl'
+            dump(data, jsonl_file)
         else:
             data = load(score_file)
 

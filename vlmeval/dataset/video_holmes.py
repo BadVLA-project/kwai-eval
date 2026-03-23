@@ -232,15 +232,22 @@ class Video_Holmes(VideoBaseDataset):
             data = load(eval_file)
             data_un = data[~pd.isna(data['prediction'])]
 
+            unparsed_count = 0
             for idx in data['index']:
                 ans = data.loc[data['index'] == idx, 'answer'].values[0]
                 pred = str(data.loc[data['index'] == idx, 'prediction'].values[0])
 
                 predicted_answer = extract_option(pred)
+                if predicted_answer == 'WRONG':
+                    unparsed_count += 1
 
-                data.loc[idx, 'score'] = int(predicted_answer == ans)
+                data.loc[data['index'] == idx, 'extracted_answer'] = predicted_answer
+                data.loc[data['index'] == idx, 'score'] = int(predicted_answer == ans)
 
             rejected = [x for x in data['score'] if x == -1]
+
+            if unparsed_count > 0:
+                print(f'[Video_Holmes] WARNING: Failed to parse answer for {unparsed_count}/{len(data)} samples')
 
             print(
                 f'Among {len(data)} questions, failed to obtain prediction for {len(data) - len(data_un)} questions, '
@@ -249,6 +256,9 @@ class Video_Holmes(VideoBaseDataset):
             )
 
             dump(data, score_file)
+            # Also save JSONL for easy server-side viewing
+            jsonl_file = score_file.rsplit('.', 1)[0] + '.jsonl'
+            dump(data, jsonl_file)
 
         rating = get_dimension_rating(score_file)
         dump(rating, tgt_file)

@@ -419,6 +419,9 @@ Based on your observations, select the best option that accurately addresses the
             )
 
             dump(data, score_file)
+            # Also save JSONL for easy server-side viewing
+            jsonl_file = score_file.rsplit('.', 1)[0] + '.jsonl'
+            dump(data, jsonl_file)
 
         rating = get_dimension_rating(score_file)
         dump(rating, tgt_file)
@@ -663,6 +666,9 @@ Based on your observations, select the best option that accurately addresses the
             )
 
             dump(data, score_file)
+            # Also save JSONL for easy server-side viewing
+            jsonl_file = score_file.rsplit('.', 1)[0] + '.jsonl'
+            dump(data, jsonl_file)
 
         rating = get_dimension_rating(score_file)
         dump(rating, tgt_file)
