@@ -36,6 +36,9 @@ export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export SKIP_ERR="${SKIP_ERR:-1}"
 
+# Give decord more EOF retries for problematic videos (default 10240)
+export DECORD_EOF_RETRY_MAX="${DECORD_EOF_RETRY_MAX:-102400}"
+
 REUSE="${REUSE:-0}"
 NGPU="${NGPU:-$(python -c 'import torch; print(torch.cuda.device_count())')}"
 # Stagger delay (seconds) between launching workers so vLLM instances

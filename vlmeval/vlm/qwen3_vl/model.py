@@ -14,6 +14,32 @@ from ...smp import get_gpu_memory, listinstr
 VLLM_MAX_IMAGE_INPUT_NUM = 128
 
 
+def _patch_qwen_vl_utils_no_torchvision_fallback():
+    """Disable torchvision video fallback in qwen_vl_utils to prevent OOM.
+
+    When decord fails on a problematic video, the default behaviour falls back
+    to torchvision which loads the *entire* video into memory and can OOM-kill
+    the worker process.  This patch replaces the torchvision backend with a
+    stub that raises, so the exception propagates to the caller where
+    SKIP_ERR=1 can skip the sample gracefully.
+    """
+    try:
+        import qwen_vl_utils.vision_process as _vp
+    except ImportError:
+        return
+    if "torchvision" in getattr(_vp, "VIDEO_READER_BACKENDS", {}):
+        def _torchvision_disabled(ele):
+            raise RuntimeError(
+                "torchvision video fallback is disabled to prevent OOM. "
+                "The primary video reader (decord) failed for this video."
+            )
+        _vp.VIDEO_READER_BACKENDS["torchvision"] = _torchvision_disabled
+        logging.info("Patched qwen_vl_utils: disabled torchvision video fallback")
+
+
+_patch_qwen_vl_utils_no_torchvision_fallback()
+
+
 def is_moe_model(model_path: str) -> bool:
     """Check if the model is a MoE model by looking for active-param suffixes like A3B, A17B."""
     import re

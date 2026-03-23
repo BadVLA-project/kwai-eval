@@ -22,7 +22,10 @@ export CXX=/usr/bin/g++
 
 export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
-export SKIP_ERR="${SKIP_ERR:-0}"
+export SKIP_ERR="${SKIP_ERR:-1}"
+
+# Give decord more EOF retries for problematic videos (default 10240)
+export DECORD_EOF_RETRY_MAX="${DECORD_EOF_RETRY_MAX:-102400}"
 
 NGPU="${NGPU:-2}"
 DELAY="${DELAY:-15}"
@@ -37,6 +40,9 @@ export HUGGINGFACE_HUB_CACHE="${HF_HOME}/hub"
 
 # Local dataset override
 export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
+
+# Force decord backend (torchcodec has FFmpeg compatibility issues on this server)
+export FORCE_QWENVL_VIDEO_READER=decord
 
 # vLLM settings
 export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-16}"
