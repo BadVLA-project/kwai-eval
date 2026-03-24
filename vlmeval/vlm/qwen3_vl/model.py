@@ -187,10 +187,18 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.limit_mm_per_prompt = VLLM_MAX_IMAGE_INPUT_NUM
         os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
         # Enable faulthandler to dump Python traceback on SIGSEGV/SIGABRT/SIGFPE.
-        # This helps diagnose C-level (CUDA) crashes that normally produce no output.
+        # Write to /tmp so C-level crashes are captured even when the process
+        # is killed before Python can print anything to stdout.
         import faulthandler as _fh
         import sys as _sys
-        _fh.enable(file=_sys.stderr, all_threads=True)
+        _fault_rank = os.environ.get('RANK', '0')
+        _fault_path = f'/tmp/vlmeval_faulthandler_rank{_fault_rank}.log'
+        try:
+            _fault_fp = open(_fault_path, 'w')
+            _fh.enable(file=_fault_fp, all_threads=True)
+            print(f'[faulthandler] crash log → {_fault_path}', flush=True)
+        except OSError:
+            _fh.enable(file=_sys.stderr, all_threads=True)
         assert self.use_vllm + self.use_lmdeploy <= 1, "You can only set one flag `use_vllm` to True"
         if self.use_vllm:
             if listinstr(['omni'], self.model_path.lower()):
