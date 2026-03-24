@@ -144,8 +144,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             else:
                 # boxed format: model self-determines whether to reason
                 self.post_prompt = (
-                    'Please put your final answer in \\boxed{} format, '
-                    'e.g. \\boxed{A}.'
+                    'Please put your final answer in \\boxed{} format.'
                 )
                 self.extract_think_answer = False
                 self.post_process = True
