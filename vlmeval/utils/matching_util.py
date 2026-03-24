@@ -151,6 +151,14 @@ def extract_answer_from_cot(text, valid_options='ABCD'):
     if m:
         return m.group(1).upper()
 
+    # 1.5. \boxed{X} — take the last occurrence (matches inference-time post_process)
+    boxed_matches = list(re.finditer(r'\\boxed\s*\{([^{}]*)\}', text))
+    if boxed_matches:
+        boxed_content = boxed_matches[-1].group(1).strip()
+        bm = re.search(option_pat, boxed_content)
+        if bm:
+            return bm.group(0).upper()
+
     # 2. Explicit answer phrases (EN + CN)
     answer_patterns = [
         r'[Ff]inal\s+[Aa]nswer\s*[:：]\s*(' + option_pat + r')\b',
@@ -186,3 +194,23 @@ def extract_answer_from_cot(text, valid_options='ABCD'):
         return matches[-1].group(1).upper()
 
     return ''
+
+
+def parse_options_from_question(question_text):
+    """Parse option letters and texts from a question string containing inline options.
+
+    Supports formats like:
+        A. option text
+        A) option text
+        (A) option text
+
+    Returns a dict like {'A': 'option text', 'B': 'other text', ...}.
+    """
+    options = {}
+    for m in re.finditer(
+        r'(?:^|\n)\s*\(?([A-F])[.)]\s*(.+?)(?=\n\s*\(?[A-F][.)]|\n*$)',
+        question_text, re.DOTALL
+    ):
+        letter = m.group(1).upper()
+        options[letter] = m.group(2).strip()
+    return options
