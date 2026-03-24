@@ -61,8 +61,8 @@ export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 # ---------------------------------------------------------------------------
 # vLLM settings
 # ---------------------------------------------------------------------------
-export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-32}"
-export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-64}"
+export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-8}"
+export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-16}"
 export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.7}"
 
 # ---------------------------------------------------------------------------
