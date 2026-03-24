@@ -45,17 +45,28 @@ def _build_dataset_registry():
 
 
 def find_prediction_files(root):
-    """Find all prediction xlsx files under *root*, excluding score/acc/submission."""
-    results = []
+    """Find all prediction xlsx files under *root*, excluding score/acc/submission.
+
+    De-duplicates by basename (keeps the newest physical copy) so that multiple
+    T{date}_G{hash}/ copies from ``--reuse`` runs are only evaluated once.
+    """
+    candidates = []
     for f in glob.glob(osp.join(root, '**', '*.xlsx'), recursive=True):
         base = osp.splitext(osp.basename(f))[0]
         if base.endswith(('_score', '_acc', '_submission')):
             continue
         real = osp.realpath(f)
         if osp.isfile(real):
-            results.append(real)
-    # De-duplicate (same real file reached via symlinks)
-    return sorted(set(results))
+            candidates.append(real)
+    # First pass: de-duplicate symlinks (same realpath)
+    candidates = list(set(candidates))
+    # Second pass: de-duplicate copies (same basename, keep newest)
+    by_name = {}
+    for f in candidates:
+        name = osp.basename(f)
+        if name not in by_name or osp.getmtime(f) > osp.getmtime(by_name[name]):
+            by_name[name] = f
+    return sorted(by_name.values())
 
 
 def infer_dataset_name(filepath, known_names):
