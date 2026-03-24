@@ -1,5 +1,6 @@
 from ...smp import *
 from .multiple_choice import extract_answer_from_item
+from ...utils.matching_util import extract_answer_from_cot
 from PIL import Image, ImageOps
 import numpy as np
 
@@ -64,11 +65,19 @@ def check_ans_with_model(pred, gt, model, item, dataset_name='MLVU_MCQ'):
 
     if ")" in pred:
         index3 = pred.index(")")
-        pred = pred[index3 - 1: index3]
-    if pred == gt_option:
+        pred_option = pred[index3 - 1: index3]
+    else:
+        pred_option = None
+
+    if pred_option == gt_option:
         flag = True
-    elif extract_answer_from_item(model, item, dataset_name)['opt'] == item['answer']:
-        flag = True
+    else:
+        # CoT extraction fallback before expensive GPT judge
+        cot_letter = extract_answer_from_cot(pred)
+        if cot_letter and cot_letter == item.get('answer', ''):
+            flag = True
+        elif extract_answer_from_item(model, item, dataset_name)['opt'] == item['answer']:
+            flag = True
 
     return flag
 

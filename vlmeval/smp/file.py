@@ -151,6 +151,8 @@ def dump(data, f, **kwargs):
         json.dump(data, open(pth, 'w'), indent=4, ensure_ascii=False, cls=NumpyEncoder)
 
     def dump_jsonl(data, f, **kwargs):
+        if isinstance(data, pd.DataFrame):
+            data = data.to_dict('records')
         lines = [json.dumps(x, ensure_ascii=False, cls=NumpyEncoder) for x in data]
         with open(f, 'w', encoding='utf8') as fout:
             fout.write('\n'.join(lines))

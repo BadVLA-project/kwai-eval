@@ -182,7 +182,8 @@ class PerceptionTest(VideoBaseDataset):
 
     @classmethod
     def evaluate(cls, eval_file, **judge_kwargs):
-        from vlmeval.utils.matching_util import extract_answer_from_cot
+        from vlmeval.utils.matching_util import extract_answer_from_cot, parse_options_from_question
+        from vlmeval.dataset.utils.multiple_choice import extract_answer_from_item
 
         data = load(eval_file)
 
@@ -206,10 +207,27 @@ class PerceptionTest(VideoBaseDataset):
         # ---- Val split: compute accuracy ----
         score_file = get_intermediate_file_path(eval_file, '_score')
         if not osp.exists(score_file):
+            # GPT judge setup (default exact_matching — no API calls)
+            model = judge_kwargs.setdefault('model', 'exact_matching')
+            if model == 'exact_matching':
+                model = None
+            else:
+                from vlmeval.dataset.utils.judge_util import build_judge
+                model = build_judge(**judge_kwargs)
+                if not model.working():
+                    model = None
+
             unparsed_count = 0
             for idx, row in data.iterrows():
                 pred = str(row.get('prediction', '')).strip()
                 pred_letter = extract_answer_from_cot(pred, valid_options='ABC')
+                if not pred_letter:
+                    # Fallback: can_infer / GPT judge via extract_answer_from_item
+                    options = parse_options_from_question(str(row.get('question', '')))
+                    if options:
+                        item = {**row.to_dict(), **options}
+                        result = extract_answer_from_item(model, item, 'PerceptionTest')
+                        pred_letter = result['opt'] if result['opt'] != 'Z' else ''
                 if not pred_letter:
                     unparsed_count += 1
                 pred_id = (

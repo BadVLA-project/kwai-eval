@@ -953,13 +953,26 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                                  total=total_chunks,
                                  desc='vLLM batch generate (chunks)'):
             chunk = messages[chunk_start: chunk_start + chunk_size]
+            # Log video paths before decode so crashes are traceable.
+            _chunk_videos = [
+                item.get('value', '') for msg in chunk
+                for item in (msg if isinstance(msg, list) else [])
+                if isinstance(item, dict) and item.get('type') == 'video'
+            ]
             logger.info(
                 f'[vLLM rank={_rank}] starting chunk {chunk_start // chunk_size + 1}/{total_chunks} '
-                f'(samples {chunk_start}..{chunk_start + len(chunk) - 1})'
+                f'(samples {chunk_start}..{chunk_start + len(chunk) - 1}) '
+                f'videos={_chunk_videos[:3]}'
             )
 
             # Build requests in parallel (video decoding is I/O + CPU bound).
+            # Guard with SIGALRM so a hung Ceph/decord read doesn't SIGKILL us.
+            # Use non-context-manager pool so we can shutdown(wait=False) on timeout.
+            import signal as _signal
+            import threading as _threading
             from concurrent.futures import ThreadPoolExecutor, as_completed
+            _decode_timeout = int(os.environ.get('VLLM_DECODE_TIMEOUT', '120'))
+            _in_main = _threading.current_thread() is _threading.main_thread()
             valid_reqs = []
             valid_positions = []
             n_workers = min(len(chunk), int(os.environ.get('VLLM_BUILD_WORKERS', '8')))
@@ -968,10 +981,20 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 i, msg = idx_msg
                 return i, self._build_vllm_request(msg, dataset=dataset)
 
-            with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                futures = {pool.submit(_build_one, (i, msg)): i for i, msg in enumerate(chunk)}
-                for fut in as_completed(futures):
-                    i = futures[fut]
+            def _alarm_raise(signum, frame):
+                raise TimeoutError(
+                    f'[vLLM rank={_rank}] video decode stalled for '
+                    f'>{_decode_timeout}s, skipping chunk {chunk_start // chunk_size + 1}'
+                )
+
+            if _in_main:
+                _orig_handler = _signal.signal(_signal.SIGALRM, _alarm_raise)
+                _signal.alarm(_decode_timeout)
+            _pool = ThreadPoolExecutor(max_workers=n_workers)
+            try:
+                _futures = {_pool.submit(_build_one, (i, msg)): i for i, msg in enumerate(chunk)}
+                for fut in as_completed(_futures):
+                    i = _futures[fut]
                     try:
                         _, req = fut.result()
                         valid_reqs.append((i, req))
@@ -983,6 +1006,22 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                             f'generate_batch_vllm: _build_vllm_request failed '
                             f'for sample {chunk_start + i}, skipping. Error: {build_err}'
                         )
+                _pool.shutdown(wait=True)
+            except TimeoutError as _te:
+                logger.warning(str(_te))
+                # Don't wait — threads may be blocked on hung Ceph I/O.
+                _pool.shutdown(wait=False, cancel_futures=True)
+                if not skip_err:
+                    raise
+                results.extend([''] * len(chunk))
+                continue
+            except Exception:
+                _pool.shutdown(wait=False)
+                raise
+            finally:
+                if _in_main:
+                    _signal.alarm(0)
+                    _signal.signal(_signal.SIGALRM, _orig_handler)
             # Sort by original position to maintain order.
             valid_reqs.sort(key=lambda x: x[0])
             valid_positions = [x[0] for x in valid_reqs]
