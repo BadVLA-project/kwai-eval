@@ -148,7 +148,13 @@ def main():
             judge_kwargs = {'model': args.judge or 'exact_matching'}
 
             try:
-                cls.evaluate(f, **judge_kwargs)
+                import pandas as pd
+                import json as _json
+                result = cls.evaluate(f, **judge_kwargs)
+                if isinstance(result, pd.DataFrame) and len(result) > 0:
+                    print(result.to_string(index=False))
+                elif isinstance(result, dict) and result:
+                    print(_json.dumps(result, indent=2, ensure_ascii=False))
                 print('       OK')
                 ok += 1
             except Exception as e:
