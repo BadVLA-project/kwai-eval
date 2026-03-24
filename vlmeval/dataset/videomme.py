@@ -35,16 +35,14 @@ class VideoMME(VideoBaseDataset):
 
     FRAMES_TMPL_NOSUB = """
 These are the frames of a video. \
-Select the best answer to the following multiple-choice question based on the video. \
-Respond with only the letter (A, B, C, or D) of the correct option.
+Select the best answer to the following multiple-choice question based on the video.
 """
 
     FRAMES_TMPL_SUB = """
 These are the frames of a video. \
 This video's subtitles are listed below:
 {}
-Select the best answer to the following multiple-choice question based on the video. \
-Respond with only the letter (A, B, C, or D) of the correct option.
+Select the best answer to the following multiple-choice question based on the video.
 """
 
     TYPE = 'Video-MCQ'

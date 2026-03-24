@@ -109,7 +109,6 @@ class PerceptionTest(VideoBaseDataset):
                 q = str(row['question'])
                 for letter, opt in zip(_OPTION_LETTERS, options[:3]):
                     q += f'\n{letter}. {opt}'
-                q += _POST_PROMPT
 
                 answer_id = int(row['answer_id']) if has_answer else -1
                 answer = _OPTION_LETTERS[answer_id] if 0 <= answer_id < 3 else ''
@@ -173,7 +172,9 @@ class PerceptionTest(VideoBaseDataset):
             for frame in frames:
                 message.append(dict(type='image', value=frame))
 
-        message.append(dict(type='text', value=str(line['question'])))
+        # Strip _POST_PROMPT from question for backward compat with cached TSVs
+        q = str(line['question']).replace(_POST_PROMPT, '').rstrip()
+        message.append(dict(type='text', value=q))
         return message
 
     # ------------------------------------------------------------------

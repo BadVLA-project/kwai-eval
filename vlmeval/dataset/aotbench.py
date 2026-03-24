@@ -168,7 +168,7 @@ class AoTBench(VideoBaseDataset):
             for frame in frames:
                 message.append(dict(type='image', value=frame))
 
-        prompt = line['question'] + '\nAnswer with the option letter only.'
+        prompt = line['question']
         message.append(dict(type='text', value=prompt))
         return message
 

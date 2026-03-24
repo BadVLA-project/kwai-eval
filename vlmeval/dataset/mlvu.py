@@ -287,7 +287,6 @@ class MLVU_MCQ(VideoBaseDataset):
             for im in img_frame_paths:
                 message.append(dict(type='image', value=im))
         message.append(dict(type='text', value=question))
-        message.append(dict(type='text', value='\nOnly give the best option.'))
         return message
 
     @classmethod
