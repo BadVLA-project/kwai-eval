@@ -249,7 +249,10 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                 continue
             batch_indices.append(idx)
             batch_structs.append(struct)
-            prompts_dict[idx] = _extract_prompt_text(struct)
+            _pt = _extract_prompt_text(struct)
+            if getattr(model, 'post_prompt', None):
+                _pt += '\n' + model.post_prompt
+            prompts_dict[idx] = _pt
 
         if batch_structs:
             chunk_size = int(os.environ.get('VLLM_BATCH_CHUNK_SIZE', '32'))
@@ -333,7 +336,10 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                 continue
             batch_indices.append(idx)
             batch_structs.append(struct)
-            prompts_dict[idx] = _extract_prompt_text(struct)
+            _pt = _extract_prompt_text(struct)
+            if getattr(model, 'post_prompt', None):
+                _pt += '\n' + model.post_prompt
+            prompts_dict[idx] = _pt
 
         if batch_structs:
             responses = model.generate_batch_transformers(
@@ -412,7 +418,10 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         if struct is None:
             continue
 
-        prompts_dict[idx] = _extract_prompt_text(struct)
+        _pt = _extract_prompt_text(struct)
+        if getattr(model, 'post_prompt', None):
+            _pt += '\n' + model.post_prompt
+        prompts_dict[idx] = _pt
 
         # Print the first batch prompt for sanity check
         if i == 0 and rank == 0:

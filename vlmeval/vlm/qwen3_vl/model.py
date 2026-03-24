@@ -438,6 +438,9 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         r'\n?Answer with the option letter only\.?',
         r'\n?Answer with the option\'?s letter from the given choices directly\.?',
         r'Respond with only the letter \([A-F][^)]*\) of the correct option\.?\s?',
+        # Video_Holmes hardcodes <think>/<answer> tags instructions — strip them in boxed mode
+        r'\s*Provide your reasoning between the <think> and </think> tags[^.]*\.',
+        r'\s*Your answer:\s*',
     ]
 
     def _rewrite_prompt_for_cot(self, content: list[dict]) -> list[dict]:
