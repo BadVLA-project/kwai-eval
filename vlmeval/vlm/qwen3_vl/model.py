@@ -186,6 +186,11 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.use_lmdeploy = kwargs.get('use_lmdeploy', False)
         self.limit_mm_per_prompt = VLLM_MAX_IMAGE_INPUT_NUM
         os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
+        # Enable faulthandler to dump Python traceback on SIGSEGV/SIGABRT/SIGFPE.
+        # This helps diagnose C-level (CUDA) crashes that normally produce no output.
+        import faulthandler as _fh
+        import sys as _sys
+        _fh.enable(file=_sys.stderr, all_threads=True)
         assert self.use_vllm + self.use_lmdeploy <= 1, "You can only set one flag `use_vllm` to True"
         if self.use_vllm:
             if listinstr(['omni'], self.model_path.lower()):
@@ -905,7 +910,9 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         # ~200 tokens/frame; target ≤ 200k visual tokens per chunk.
         max_visual_tokens_per_chunk = int(os.environ.get('VLLM_MAX_VISUAL_TOKENS_PER_CHUNK', '200000'))
         tokens_per_sample = (self.nframe or 16) * 200
-        adaptive_max = max(1, max_visual_tokens_per_chunk // tokens_per_sample)
+        # Divide budget by world_size so all ranks combined stay within the limit.
+        world_size = int(os.environ.get('WORLD_SIZE', '1'))
+        adaptive_max = max(1, max_visual_tokens_per_chunk // (tokens_per_sample * world_size))
         if chunk_size > adaptive_max:
             import logging as _logging
             _logging.info(
@@ -925,6 +932,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             stop_token_ids=None,
         )
         skip_err = os.environ.get('SKIP_ERR', '0') == '1'
+        _rank = int(os.environ.get('RANK', '0'))
         results = []
         # CoT truncation statistics
         _cot_total = 0
@@ -969,11 +977,42 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             # Placeholders for the whole chunk; fill in successful results by position.
             chunk_results = [''] * len(chunk)
             if valid_reqs:
+                # --- Diagnostic: log GPU memory and prompt token lengths ---
+                try:
+                    import torch as _torch
+                    mem_alloc = _torch.cuda.memory_allocated() / 1e9
+                    mem_res = _torch.cuda.memory_reserved() / 1e9
+                    print(
+                        f'[vLLM rank={_rank}] chunk {chunk_start // chunk_size + 1}/{total_chunks}: '
+                        f'{len(valid_reqs)} reqs, '
+                        f'GPU mem alloc={mem_alloc:.1f}GB / reserved={mem_res:.1f}GB',
+                        flush=True
+                    )
+                    # Check if any prompt might exceed max_model_len
+                    for _req in valid_reqs:
+                        _prompt = _req.get('prompt', '') if isinstance(_req, dict) else ''
+                        if _prompt:
+                            _n_char = len(_prompt)
+                            if _n_char > 50000:  # rough heuristic: >50k chars → likely >32768 tokens
+                                print(
+                                    f'[vLLM rank={_rank}] WARNING: prompt has {_n_char} chars, '
+                                    f'may exceed max_model_len=32768',
+                                    flush=True
+                                )
+                except Exception:
+                    pass
+                # ---------------------------------------------------------
                 try:
                     outputs = self.llm.generate(
                         valid_reqs, sampling_params=sampling_params, use_tqdm=False
                     )
                 except Exception as gen_err:
+                    import traceback as _tb
+                    print(
+                        f'[vLLM rank={_rank}] llm.generate FAILED at chunk {chunk_start}: '
+                        f'{type(gen_err).__name__}: {gen_err}\n{_tb.format_exc()}',
+                        flush=True
+                    )
                     if not skip_err:
                         raise
                     import logging as _logging

@@ -499,6 +499,15 @@ def infer_data_job_video(
             t0 = _time.time()
             while not all(osp.exists(osp.join(_barrier_dir, f'{tag}_rank{r}'))
                           for r in range(world_size)):
+                # Fast-fail if any peer rank has been marked dead by the launcher.
+                for r in range(world_size):
+                    if r == rank:
+                        continue
+                    dead = osp.join(_barrier_dir, f'rank_{r}_dead')
+                    if osp.exists(dead):
+                        raise RuntimeError(
+                            f'file_barrier abort: peer rank {r} died (inference_video, rank={rank})'
+                        )
                 if _time.time() - t0 > timeout:
                     raise RuntimeError(f'file_barrier timeout in inference_video (rank={rank})')
                 _time.sleep(0.5)

@@ -22,6 +22,8 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 
 def parse_args() -> tuple[argparse.Namespace, list[str]]:
@@ -46,6 +48,39 @@ def detect_gpu_count() -> int:
         return len(out.strip().splitlines())
     except Exception:
         return 1
+
+
+def _dead_sentinel_path(barrier_dir: str, rank: int) -> str:
+    return os.path.join(barrier_dir, f'rank_{rank}_dead')
+
+
+def _monitor_workers(procs: list, barrier_dir: str, done_event: threading.Event) -> None:
+    """Background thread: detect crashed workers and write dead-rank sentinel files.
+
+    When a worker exits with a non-zero code, a sentinel file is written so
+    that the file_barrier functions in other workers can detect the failure
+    quickly instead of waiting for the full DIST_TIMEOUT.
+    """
+    reported: set[int] = set()
+    while not done_event.is_set():
+        for rank, proc in enumerate(procs):
+            if rank in reported:
+                continue
+            rc = proc.poll()
+            if rc is not None and rc != 0:
+                reported.add(rank)
+                sentinel = _dead_sentinel_path(barrier_dir, rank)
+                try:
+                    with open(sentinel, 'w') as f:
+                        f.write(str(rc))
+                    print(
+                        f'[launcher-monitor] rank {rank} died (rc={rc}), '
+                        f'wrote dead sentinel → other ranks will abort barrier quickly',
+                        flush=True
+                    )
+                except OSError:
+                    pass
+        time.sleep(1)
 
 
 def main() -> None:
@@ -82,9 +117,15 @@ def main() -> None:
 
         # Stagger launches so vLLM instances don't compete during init.
         if rank < ngpu - 1 and args.delay > 0:
-            import time
             print(f"[launcher] waiting {args.delay}s before next worker ...", flush=True)
             time.sleep(args.delay)
+
+    # Start background monitor that writes dead-rank sentinel files.
+    done_event = threading.Event()
+    monitor = threading.Thread(
+        target=_monitor_workers, args=(procs, barrier_dir, done_event), daemon=True
+    )
+    monitor.start()
 
     # Wait for all workers.  Propagate failure.
     def _kill_all(sig=None, frame=None):
@@ -103,6 +144,8 @@ def main() -> None:
         rc = proc.wait()
         exit_codes.append(rc)
         print(f"[launcher] rank {rank} exited with code {rc}", flush=True)
+
+    done_event.set()
 
     # Cleanup barrier dir.
     import shutil

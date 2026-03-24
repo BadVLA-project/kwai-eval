@@ -277,6 +277,15 @@ def main():
         timeout = int(os.environ.get('DIST_TIMEOUT', 3600))
         t0 = _time.time()
         while True:
+            # Fast-fail if any peer rank has been marked dead by the launcher.
+            for r in range(WORLD_SIZE):
+                if r == RANK:
+                    continue
+                dead = osp.join(_barrier_dir, f'rank_{r}_dead')
+                if osp.exists(dead):
+                    raise RuntimeError(
+                        f'file_barrier abort: peer rank {r} died (tag={tag}, rank={RANK})'
+                    )
             if all(osp.exists(osp.join(_barrier_dir, f'barrier_{tag}_rank{r}'))
                    for r in range(WORLD_SIZE)):
                 break
