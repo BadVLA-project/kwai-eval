@@ -120,7 +120,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.post_process = post_process
 
         # USE_COT env var allows runtime override without changing config entries.
-        # USE_COT=0 (default) : no CoT prompt
+        # USE_COT=0 (default) : greedy, "Answer with the option letter only."
         # USE_COT=1 or USE_COT=boxed : boxed{} format — model decides to think or not
         # USE_COT=tags : legacy <think>/<answer> tag format
         env_cot = os.environ.get('USE_COT', '0')
@@ -150,7 +150,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 self.extract_think_answer = False
                 self.post_process = True
         else:
-            self.post_prompt = None
+            self.post_prompt = 'Answer with the option letter only.'
             self.extract_think_answer = False
 
         # TEMPERATURE env var allows overriding temperature independently of CoT.
