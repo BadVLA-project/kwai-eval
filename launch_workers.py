@@ -30,6 +30,9 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ngpu", type=int, default=0,
                         help="Number of GPUs / workers. 0 = auto-detect.")
+    parser.add_argument("--gpu-offset", type=int, default=0,
+                        help="Physical GPU index offset. Rank r uses GPU (r + gpu-offset). "
+                             "Use this to assign e.g. GPUs 4-7 on an 8-GPU node.")
     parser.add_argument("--delay", type=float, default=15.0,
                         help="Seconds of stagger between launching workers "
                              "(gives vLLM time to finish init before the next starts).")
@@ -86,10 +89,11 @@ def _monitor_workers(procs: list, barrier_dir: str, done_event: threading.Event)
 def main() -> None:
     args, worker_cmd = parse_args()
     ngpu = args.ngpu or detect_gpu_count()
+    gpu_offset = args.gpu_offset
 
     # Create a shared temp directory for file-based barriers.
     barrier_dir = tempfile.mkdtemp(prefix="vlmeval_barrier_")
-    print(f"[launcher] ngpu={ngpu}, delay={args.delay}s, barrier_dir={barrier_dir}", flush=True)
+    print(f"[launcher] ngpu={ngpu}, gpu_offset={gpu_offset}, delay={args.delay}s, barrier_dir={barrier_dir}", flush=True)
     print(f"[launcher] worker command: {worker_cmd}", flush=True)
 
     procs: list[subprocess.Popen] = []
@@ -100,7 +104,7 @@ def main() -> None:
         env["LOCAL_RANK"] = str(rank)
         env["WORLD_SIZE"] = str(ngpu)
         env["LOCAL_WORLD_SIZE"] = str(ngpu)
-        env["CUDA_VISIBLE_DEVICES"] = str(rank)
+        env["CUDA_VISIBLE_DEVICES"] = str(rank + gpu_offset)
         env["VLMEVAL_BARRIER_DIR"] = barrier_dir
         # Force unbuffered Python output for real-time logging.
         env["PYTHONUNBUFFERED"] = "1"
@@ -111,7 +115,7 @@ def main() -> None:
             env.pop(k, None)
 
         cmd = [sys.executable] + worker_cmd
-        print(f"[launcher] starting rank {rank}/{ngpu}  CUDA_VISIBLE_DEVICES={rank}  cmd={cmd}", flush=True)
+        print(f"[launcher] starting rank {rank}/{ngpu}  CUDA_VISIBLE_DEVICES={rank + gpu_offset}  cmd={cmd}", flush=True)
         proc = subprocess.Popen(cmd, env=env)
         procs.append(proc)
 
