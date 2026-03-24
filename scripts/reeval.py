@@ -145,9 +145,7 @@ def main():
                 if removed:
                     print(f'       cleaned: {", ".join(removed)}')
 
-            judge_kwargs = {}
-            if args.judge:
-                judge_kwargs['model'] = args.judge
+            judge_kwargs = {'model': args.judge or 'exact_matching'}
 
             try:
                 cls.evaluate(f, **judge_kwargs)
