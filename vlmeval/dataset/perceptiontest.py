@@ -53,10 +53,10 @@ class PerceptionTest(VideoBaseDataset):
                 osp.join(root, f'{split_name}-*.parquet'),
                 osp.join(root, f'data/{split_name}-*.parquet'),
                 osp.join(root, f'mc_question/{split_name}-*.parquet'),
-                osp.join(root, f'mc_question_val/*.parquet'),
+                osp.join(root, 'mc_question_val/*.parquet'),
                 osp.join(root, f'mc_question_val/{split_name}-*.parquet'),
                 # wildcard fallback: any parquet under split-named sub-directory
-                osp.join(root, f'mc_question_val/**/*.parquet'),
+                osp.join(root, 'mc_question_val/**/*.parquet'),
             ]:
                 files = sorted(glob.glob(pat, recursive=True))
                 if files:

@@ -176,7 +176,8 @@ class FutureOmni(VideoBaseDataset):
         acc_file = get_intermediate_file_path(eval_file, '_acc', 'csv')
         dump(result_df, acc_file)
 
-        print(f'FutureOmni Accuracy: {correct}/{total} = {correct / total:.2%}' if total > 0 else 'FutureOmni: no samples')
+        accuracy_str = f'{correct}/{total} = {correct / total:.2%}' if total > 0 else 'no samples'
+        print(f'FutureOmni Accuracy: {accuracy_str}')
         for _, r in result_df.iterrows():
             if r['category'] != 'overall':
                 print(f'  [{r["category"]}] {r["success"]}/{r["overall"]}')

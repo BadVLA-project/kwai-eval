@@ -62,7 +62,7 @@ Respond with only the letter (A, B, C, or D) of the correct option.
     @classmethod
     def supported_datasets(cls):
         return ['Video-MME']
-    
+
     def prepare_dataset(self, dataset_name='Video-MME', repo_id='lmms-lab/Video-MME'):
         # 内部辅助函数保持不变
         def check_integrity(pth):
@@ -82,7 +82,7 @@ Respond with only the letter (A, B, C, or D) of the correct option.
             # 为了兼容性，确保 video 目录存在
             base_dir = pth
             target_dir = os.path.join(pth, 'video/')
-            
+
             # 如果 video 文件夹已经存在且不为空，假设已解压，直接跳过
             if os.path.exists(target_dir) and len(os.listdir(target_dir)) > 0:
                 print(f'Video folder {target_dir} exists and is not empty. Skipping unzip.')
@@ -92,7 +92,7 @@ Respond with only the letter (A, B, C, or D) of the correct option.
                     if file.endswith('.zip') and file.startswith('video')
                 ]
                 zip_files.sort()
-                
+
                 if len(zip_files) > 0:
                     os.makedirs(target_dir, exist_ok=True)
                     print(f'Unzipping {len(zip_files)} video zip files...')
@@ -115,9 +115,9 @@ Respond with only the letter (A, B, C, or D) of the correct option.
             # 字幕解压逻辑
             subtitle_zip_file = os.path.join(base_dir, 'subtitle.zip')
             subtitle_target_dir = os.path.join(base_dir, 'subtitle')
-            
+
             if os.path.exists(subtitle_target_dir) and len(os.listdir(subtitle_target_dir)) > 0:
-                pass 
+                pass
             elif os.path.exists(subtitle_zip_file):
                 os.makedirs(subtitle_target_dir, exist_ok=True)
                 with zipfile.ZipFile(subtitle_zip_file, 'r') as zip_ref:
@@ -141,7 +141,7 @@ Respond with only the letter (A, B, C, or D) of the correct option.
                 parquet_file_root = os.path.join(pth, 'test-00000-of-00001.parquet')
                 if os.path.exists(parquet_file_root):
                     parquet_file = parquet_file_root
-            
+
             if not os.path.exists(parquet_file):
                 print(f"Warning: Parquet file not found at {parquet_file}, cannot generate TSV.")
                 return
@@ -154,29 +154,30 @@ Respond with only the letter (A, B, C, or D) of the correct option.
             data_file_df['subtitle_path'] = data_file_df['videoID'].apply(lambda x: f'./subtitle/{x}.srt')
             data_file_df['candidates'] = data_file_df['options'].apply(lambda x: x.tolist())
 
-            data_file_df = data_file_df[['index', 'video', 'video_path', 'duration', 'domain', 'candidates',
-                                   'sub_category', 'task_type', 'subtitle_path', 'question', 'answer']]
+            data_file_df = data_file_df[
+                ['index', 'video', 'video_path', 'duration', 'domain', 'candidates',
+                 'sub_category', 'task_type', 'subtitle_path', 'question', 'answer']]
 
             data_file_df.to_csv(osp.join(pth, f'{dataset_name}.tsv'), sep='\t', index=False)
 
         # === 核心修改逻辑 ===
-        
+
         # 1. 优先使用你指定的绝对路径
         # 根据你的 ls 结果：/m2v_intern/xuboshen/zgw/LMUData/datasets/lmms-lab/Video-MME
         local_target_path = "/m2v_intern/xuboshen/zgw/LMUData/datasets/lmms-lab/Video-MME"
-        
+
         if os.path.exists(local_target_path):
             print(f"Loading Video-MME from local path: {local_target_path}")
             dataset_path = local_target_path
-            
+
             # 即使是本地文件，也运行一下解压和TSV生成（如果已存在它们会自动跳过，很安全）
             unzip_hf_zip(dataset_path)
             generate_tsv(dataset_path)
-            
+
         else:
             # 2. 如果本地路径不存在，才尝试走原来的逻辑（作为保底，或者你可以选择直接报错）
             print(f"Local path {local_target_path} not found. Trying HuggingFace cache...")
-            
+
             cache_path = get_cache_path(repo_id)
             if cache_path is not None and check_integrity(cache_path):
                 dataset_path = cache_path

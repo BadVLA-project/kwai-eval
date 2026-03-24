@@ -546,16 +546,16 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
 
         # [修改] 这里的 apply_chat_template 会计算动态 token 数量
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        
+
         # [关键修改] 获取 video_kwargs (包含 grid_thw)
         if listinstr(['omni'], self.model_path.lower()):
             audios, images, videos = process_mm_info(messages, use_audio_in_video=self.use_audio_in_video)
-            video_kwargs = None # Omni 处理逻辑可能不同，按原样或参考 Qwen3
+            video_kwargs = None  # Omni 处理逻辑可能不同，按原样或参考 Qwen3
         else:
             # 必须设置 return_video_kwargs=True
             images, videos, video_kwargs = process_vision_info(
-                messages, 
-                return_video_kwargs=True 
+                messages,
+                return_video_kwargs=True
             )
         # text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         # if listinstr(['omni'], self.model_path.lower()):
@@ -574,7 +574,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             #     "mm_processor_kwargs":{}
             # }
             video_inputs = {
-                "prompt": text, 
+                "prompt": text,
                 "multi_modal_data": {"video": videos_nd[0]},
                 # [关键修复] 将捕获到的 video_kwargs 传进去，而不是传空字典 {}
                 "mm_processor_kwargs": video_kwargs if video_kwargs is not None else {}

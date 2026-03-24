@@ -47,6 +47,7 @@ def is_moe_model(model_path: str) -> bool:
         return True
     return False
 
+
 def ensure_image_url(image: str) -> str:
     prefixes = ['http://', 'https://', 'file://', 'data:image']
     if any(image.startswith(prefix) for prefix in prefixes):
@@ -271,7 +272,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             _dist.is_initialized = lambda: False
 
             print(f'[vLLM init] torch.distributed.is_initialized() = {_orig_is_init()}', flush=True)
-            print(f'[vLLM init] Creating vllm.LLM() ...', flush=True)
+            print('[vLLM init] Creating vllm.LLM() ...', flush=True)
 
             try:
                 self.llm = LLM(
@@ -282,7 +283,8 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                     seed=0,
                     max_model_len=32768,
                     enforce_eager=True,
-                    gpu_memory_utilization=kwargs.get("gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
+                    gpu_memory_utilization=kwargs.get(
+                        "gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
                     trust_remote_code=True,
                     limit_mm_per_prompt=limit_mm,
                 )
@@ -796,7 +798,6 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 generated_ids = self.model.generate(**inputs, **self.generate_kwargs)
             except torch.cuda.OutOfMemoryError:
                 # Clean up before caller retries with smaller batches.
-                del inputs
                 torch.cuda.empty_cache()
                 return False
 
@@ -1025,8 +1026,8 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             import logging as _logging
             _logging.warning(
                 f'[CoT Stats] total={_cot_total}, '
-                f'truncated(max_tokens)={_cot_truncated} ({_cot_truncated*100/_cot_total:.1f}%), '
-                f'missing_<answer>_tag={_cot_no_answer_tag} ({_cot_no_answer_tag*100/_cot_total:.1f}%)'
+                f'truncated(max_tokens)={_cot_truncated} ({_cot_truncated * 100 / _cot_total:.1f}%), '
+                f'missing_<answer>_tag={_cot_no_answer_tag} ({_cot_no_answer_tag * 100 / _cot_total:.1f}%)'
             )
         return results
 

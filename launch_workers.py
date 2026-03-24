@@ -72,7 +72,7 @@ def main() -> None:
 
         # Remove torchrun vars that might linger from a parent script.
         for k in ("MASTER_ADDR", "MASTER_PORT", "GROUP_RANK",
-                   "ROLE_RANK", "ROLE_WORLD_SIZE", "TORCHELASTIC_RUN_ID"):
+                  "ROLE_RANK", "ROLE_WORLD_SIZE", "TORCHELASTIC_RUN_ID"):
             env.pop(k, None)
 
         cmd = [sys.executable] + worker_cmd

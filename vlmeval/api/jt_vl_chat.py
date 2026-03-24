@@ -8,12 +8,15 @@ from vlmeval.api.base import BaseAPI
 from vlmeval.dataset import DATASET_TYPE
 from vlmeval.dataset import img_root_map
 
+API_ENDPOINT = (
+    "https://hl.jiutian.10086.cn/kunlun/ingress/api/hl-4a9c15/"
+    "7b11a3451e1a4612a6661c3e22235df6/ai-4dfc1be4e6854a75a833aab9b956128c/"
+    "service-e5893ba5c1154a1192cb8e60af11e276/v1/chat/completions"
+)
 
 
-API_ENDPOINT ="https://hl.jiutian.10086.cn/kunlun/ingress/api/hl-4a9c15/7b11a3451e1a4612a6661c3e22235df6/ai-4dfc1be4e6854a75a833aab9b956128c/service-e5893ba5c1154a1192cb8e60af11e276/v1/chat/completions"
+APP_CODE = "B0m6Tuglt5shfY7t3GyoJn1V5yVAm0Ba"
 
-
-APP_CODE="B0m6Tuglt5shfY7t3GyoJn1V5yVAm0Ba"
 
 class JTVLChatWrapper(BaseAPI):
     is_api: bool = True
@@ -38,7 +41,6 @@ class JTVLChatWrapper(BaseAPI):
         self.api_base = API_ENDPOINT
         self.app_code = APP_CODE
 
-        
         super().__init__(wait=wait, retry=retry, system_prompt=system_prompt, verbose=verbose, **kwargs)
 
     def dump_image(self, line, dataset):
@@ -205,26 +207,25 @@ class JTVLChatWrapper(BaseAPI):
                 image_path=image_path,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                understanding_plus = True,
-                stream = True)
+                understanding_plus=True,
+                stream=True)
         else:
             send_data = self.get_send_data_no_image(
                 prompt=prompt,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                understanding_plus = True,
-                stream = True)
+                understanding_plus=True,
+                stream=True)
 
         json_data = json.dumps(send_data)
 
         header_dict = {'Content-Type': 'application/json','Authorization': self.app_code}
-        
+
         r = requests.post(self.api_base, headers=header_dict, data=json_data, timeout=3000,stream=True)
         try:
             if send_data.get('stream', False):
                 chunks = []
                 full_content = ""
-                last_valid_usage = None  # 用于记录最后一个有效的usage
                 # 流式处理 - 直接迭代并打印结果
                 try:
                     for line in r.iter_lines():
@@ -237,11 +238,7 @@ class JTVLChatWrapper(BaseAPI):
                                 try:
                                     chunk = json.loads(event_data)
                                     chunks.append(chunk)
-                                
-                                    # 记录最后一个有效的usage（不累加）
-                                    if 'usage' in chunk:
-                                        last_valid_usage = chunk['usage']
-                                    
+
                                     if 'choices' in chunk:
                                         for choice in chunk['choices']:
                                             if 'delta' in choice and 'content' in choice['delta']:
@@ -254,7 +251,7 @@ class JTVLChatWrapper(BaseAPI):
                     return 0,full_content,'Succeeded! '
                 except Exception as e:
                     return -1,f'Error: {str(e)}',''
-                    
+
             else:
                 # 非流式处理
                 try:
@@ -271,7 +268,6 @@ class JTVLChatWrapper(BaseAPI):
                     return -1,error_msg,''
         except Exception as e:
             return -1,f'Error: {str(e)}',''
-
 
 
 class JTVLChatAPI(JTVLChatWrapper):

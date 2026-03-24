@@ -139,7 +139,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     model = supported_VLM[model_name](**kwargs) if isinstance(model, str) else model
     if ws_bak:
         os.environ['WORLD_SIZE'] = ws_bak
-    
+
     # =============== [开始] 插入保存配置代码 ===============
     # 只有 rank 0 (主进程) 负责保存，避免多进程写冲突
     if rank == 0:
@@ -147,7 +147,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             import json
             # work_dir 就是结果输出目录
             config_save_path = osp.join(work_dir, 'model_config.json')
-            
+
             # 只有文件不存在时才保存，避免重复覆盖
             if not osp.exists(config_save_path):
                 saved_config = {
@@ -167,7 +167,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                     # 特别保存 limit_mm_per_prompt，这对应你修改的 VLLM_MAX_IMAGE_INPUT_NUM
                     "limit_mm_per_prompt": getattr(model, 'limit_mm_per_prompt', None)
                 }
-                
+
                 with open(config_save_path, 'w', encoding='utf-8') as f:
                     json.dump(saved_config, f, indent=4, ensure_ascii=False)
                 print(f"[Config] Model configuration saved to: {config_save_path}")

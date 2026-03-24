@@ -135,8 +135,8 @@ class MLVU_MCQ(VideoBaseDataset):
             if not self.data_list:
                 # Fall back to parquet when JSON annotations are absent or empty
                 parquet_files = sorted(
-                    glob.glob(os.path.join(pth, 'mlvu_test', '*.parquet')) +
-                    glob.glob(os.path.join(pth, 'mlvu_dev', '*.parquet'))
+                    glob.glob(os.path.join(pth, 'mlvu_test', '*.parquet'))
+                    + glob.glob(os.path.join(pth, 'mlvu_dev', '*.parquet'))
                 )
                 if not parquet_files:
                     raise FileNotFoundError(
@@ -149,8 +149,9 @@ class MLVU_MCQ(VideoBaseDataset):
                 for _, row in df.iterrows():
                     task_type = str(row.get('task_type', ''))
                     # Parquet video column may be named 'video_name' instead of 'video'
-                    video = row.get('video', row.get('video_name',
-                            row.get('video_uid', row.get('video_id', ''))))
+                    video = row.get(
+                        'video',
+                        row.get('video_name', row.get('video_uid', row.get('video_id', ''))))
                     if pd.isna(video) or not str(video).strip():
                         continue
                     video = str(video)
@@ -428,8 +429,8 @@ class MLVU_OpenEnded(VideoBaseDataset):
             if not self.data_list:
                 # Fall back to parquet when JSON annotations are absent or empty
                 parquet_files = sorted(
-                    glob.glob(os.path.join(pth, 'mlvu_test', '*.parquet')) +
-                    glob.glob(os.path.join(pth, 'mlvu_dev', '*.parquet'))
+                    glob.glob(os.path.join(pth, 'mlvu_test', '*.parquet'))
+                    + glob.glob(os.path.join(pth, 'mlvu_dev', '*.parquet'))
                 )
                 if not parquet_files:
                     raise FileNotFoundError(
@@ -440,8 +441,9 @@ class MLVU_OpenEnded(VideoBaseDataset):
                 # Do not filter by task_type: test-split parquet may use different names
                 for _, row in df.iterrows():
                     task_type = str(row.get('task_type', ''))
-                    video = row.get('video', row.get('video_name',
-                            row.get('video_uid', row.get('video_id', ''))))
+                    video = row.get(
+                        'video',
+                        row.get('video_name', row.get('video_uid', row.get('video_id', ''))))
                     if pd.isna(video) or not str(video).strip():
                         continue
                     video = str(video)

@@ -140,7 +140,8 @@ Based on your observations, select the best option that accurately addresses the
                                 'https://huggingface.co/datasets/OpenGVLab/MVBench for detailed reason.'
                             )
                             # raise Exception(
-                            #     f"{os.path.join(v[1].replace('your_data_path', 'video'), data['video'])} does not exist"
+                            #     f"{os.path.join(v[1].replace('your_data_path', 'video'), data['video'])}"
+                            #     " does not exist"
                             # )
 
                 data_df = pd.DataFrame(self.data_list)
