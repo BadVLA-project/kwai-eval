@@ -348,7 +348,18 @@ def main():
         f'[%(asctime)s] %(levelname)s [rank{RANK}] %(name)s: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'))
     _global_log_handler.setLevel(logging.DEBUG)
+
+    # Flush after every emit so that SIGKILL (OOM-killer) does not lose data.
+    class _FlushHandler(logging.FileHandler):
+        def emit(self, record):
+            super().emit(record)
+            self.flush()
+
+    _global_log_handler.__class__ = _FlushHandler
     logging.getLogger().addHandler(_global_log_handler)
+    # Also add to the 'RUN' logger directly because get_logger() sets
+    # propagate=False, so messages from logger('RUN') never reach root.
+    logger.addHandler(_global_log_handler)
     # Ensure root logger level allows DEBUG through to file handler
     # (StreamHandler level on each named logger still controls stderr output).
     logging.getLogger().setLevel(logging.DEBUG)
@@ -690,6 +701,7 @@ def main():
 
     # Clean up global debug log handler
     logging.getLogger().removeHandler(_global_log_handler)
+    logger.removeHandler(_global_log_handler)
     _global_log_handler.close()
 
     if WORLD_SIZE > 1 and dist is not None:
