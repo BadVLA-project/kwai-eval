@@ -119,6 +119,7 @@ CMD=(
   --
   run.py
   --use-vllm
+  --judge exact_matching
   --data "${DATASETS[@]}"
   --model "${MODELS[@]}"
   --work-dir "${WORK_DIR}"
