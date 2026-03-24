@@ -953,6 +953,10 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                                  total=total_chunks,
                                  desc='vLLM batch generate (chunks)'):
             chunk = messages[chunk_start: chunk_start + chunk_size]
+            logger.info(
+                f'[vLLM rank={_rank}] starting chunk {chunk_start // chunk_size + 1}/{total_chunks} '
+                f'(samples {chunk_start}..{chunk_start + len(chunk) - 1})'
+            )
 
             # Build requests in parallel (video decoding is I/O + CPU bound).
             from concurrent.futures import ThreadPoolExecutor, as_completed
