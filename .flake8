@@ -1,0 +1,17 @@
+[flake8]
+max-line-length = 120
+ignore = F401,F403,F405,E402,E722,E741,W503,E231,E702
+exclude =
+    scripts/,
+    assets/,
+    vlmeval/config.py,
+    vlmeval/dataset/utils/wemath.py,
+    vlmeval/dataset/OmniDocBench/,
+    vlmeval/dataset/utils/megabench/,
+    vlmeval/dataset/utils/vgrpbench/,
+    vlmeval/dataset/utils/chartmimic/,
+    vlmeval/vlm/ola/,
+    vlmeval/vlm/ursa/,
+    vlmeval/vlm/ovis/,
+    vlmeval/dataset/utils/mme_reasoning.py,
+    configs/
