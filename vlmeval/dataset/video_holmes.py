@@ -34,10 +34,9 @@ class Video_Holmes(VideoBaseDataset):
     SYS = ''
 
     QUESTION_TMPL = """
-    Based on the given video, reason and answer the single-choice question. Provide your reasoning between the <think> and </think> tags, and then give your final answer between the <answer> and </answer> tags. \
-    The question is: {}. The options are: {}. \
-    Your answer:
-    """  # noqa: E501
+    Based on the given video, reason and answer the single-choice question. \
+    The question is: {}. The options are: {}.
+    """
 
     TYPE = 'Video-MCQ'
     DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
