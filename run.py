@@ -336,6 +336,24 @@ def main():
         elif dist is not None:
             dist.barrier()
 
+    # ---------------------------------------------------------------------------
+    # Global debug log — one file per rank, captures ALL logging output.
+    # Located at {work_dir}/debug_rank{N}.log so important diagnostics
+    # (GPU memory, vLLM errors, barrier events) are not lost in tqdm noise.
+    # ---------------------------------------------------------------------------
+    os.makedirs(args.work_dir, exist_ok=True)
+    _global_log_path = osp.join(args.work_dir, f'debug_rank{RANK}.log')
+    _global_log_handler = logging.FileHandler(_global_log_path, mode='a')
+    _global_log_handler.setFormatter(logging.Formatter(
+        f'[%(asctime)s] %(levelname)s [rank{RANK}] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'))
+    _global_log_handler.setLevel(logging.DEBUG)
+    logging.getLogger().addHandler(_global_log_handler)
+    # Ensure root logger level allows DEBUG through to file handler
+    # (StreamHandler level on each named logger still controls stderr output).
+    logging.getLogger().setLevel(logging.DEBUG)
+    logger.info(f'[DebugLog] Global debug log → {_global_log_path}')
+
     model = None
     for _, model_name in enumerate(args.model):
         # Clean up previous model's vLLM engine to free GPU memory before
@@ -669,6 +687,10 @@ def main():
                             f'[{ts}] {model_name} x {dataset_name}: '
                             f'{elapsed_min:.2f} min ({bench_elapsed:.1f}s)\n'
                         )
+
+    # Clean up global debug log handler
+    logging.getLogger().removeHandler(_global_log_handler)
+    _global_log_handler.close()
 
     if WORLD_SIZE > 1 and dist is not None:
         dist.destroy_process_group()

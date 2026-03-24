@@ -13,6 +13,8 @@ from ...smp import get_gpu_memory, listinstr
 
 VLLM_MAX_IMAGE_INPUT_NUM = 128
 
+logger = logging.getLogger('vlmeval.qwen3_vl')
+
 
 def _patch_qwen_vl_utils_no_torchvision_fallback():
     """Disable torchvision video fallback in qwen_vl_utils to prevent OOM.
@@ -196,7 +198,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         try:
             _fault_fp = open(_fault_path, 'w')
             _fh.enable(file=_fault_fp, all_threads=True)
-            print(f'[faulthandler] crash log → {_fault_path}', flush=True)
+            logger.info(f'[faulthandler] crash log → {_fault_path}')
         except OSError:
             _fh.enable(file=_sys.stderr, all_threads=True)
         assert self.use_vllm + self.use_lmdeploy <= 1, "You can only set one flag `use_vllm` to True"
@@ -988,13 +990,13 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 # --- Diagnostic: log GPU memory and prompt token lengths ---
                 try:
                     import torch as _torch
-                    mem_alloc = _torch.cuda.memory_allocated() / 1e9
-                    mem_res = _torch.cuda.memory_reserved() / 1e9
-                    print(
+                    _free, _total = _torch.cuda.mem_get_info()
+                    mem_used = (_total - _free) / 1e9
+                    mem_total = _total / 1e9
+                    logger.info(
                         f'[vLLM rank={_rank}] chunk {chunk_start // chunk_size + 1}/{total_chunks}: '
                         f'{len(valid_reqs)} reqs, '
-                        f'GPU mem alloc={mem_alloc:.1f}GB / reserved={mem_res:.1f}GB',
-                        flush=True
+                        f'GPU mem used={mem_used:.1f}GB / total={mem_total:.1f}GB'
                     )
                     # Check if any prompt might exceed max_model_len
                     for _req in valid_reqs:
@@ -1002,10 +1004,9 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                         if _prompt:
                             _n_char = len(_prompt)
                             if _n_char > 50000:  # rough heuristic: >50k chars → likely >32768 tokens
-                                print(
-                                    f'[vLLM rank={_rank}] WARNING: prompt has {_n_char} chars, '
-                                    f'may exceed max_model_len=32768',
-                                    flush=True
+                                logger.warning(
+                                    f'[vLLM rank={_rank}] prompt has {_n_char} chars, '
+                                    f'may exceed max_model_len=32768'
                                 )
                 except Exception:
                     pass
@@ -1016,10 +1017,9 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                     )
                 except Exception as gen_err:
                     import traceback as _tb
-                    print(
+                    logger.error(
                         f'[vLLM rank={_rank}] llm.generate FAILED at chunk {chunk_start}: '
-                        f'{type(gen_err).__name__}: {gen_err}\n{_tb.format_exc()}',
-                        flush=True
+                        f'{type(gen_err).__name__}: {gen_err}\n{_tb.format_exc()}'
                     )
                     if not skip_err:
                         raise
