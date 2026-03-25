@@ -12,28 +12,34 @@ from .config import (
 
 
 def plot_overall_bar(loader, output_dir, formats):
-    """Chart 6: Grouped bar — all models, bars = selected benchmarks."""
+    """Chart 6: Average score per model (horizontal bar, sorted) with per-benchmark dots."""
     df = loader.load_overall_matrix()
 
-    n_models = len(df.index)
-    n_datasets = len(df.columns)
-    x = np.arange(n_models)
-    width = 0.8 / n_datasets
+    # Average score across all benchmarks (ignoring NaN)
+    avg = df.mean(axis=1).sort_values(ascending=True)
+    colors = []
+    for label in avg.index:
+        m = next((k for k, v in MODEL_LABELS.items() if v == label), None)
+        colors.append(MODEL_COLORS.get(m, '#888888'))
 
-    fig, ax = plt.subplots(figsize=(16, 6))
-    cmap = plt.cm.Set3(np.linspace(0, 1, n_datasets))
+    fig, ax = plt.subplots(figsize=(10, 6))
+    y = np.arange(len(avg))
+    ax.barh(y, avg, color=colors, edgecolor='white', linewidth=0.5, height=0.6, alpha=0.8)
 
-    for i, col in enumerate(df.columns):
-        vals = df[col].values
-        ax.bar(x + i * width - 0.4 + width / 2, vals, width,
-               label=col, color=cmap[i], edgecolor='white', linewidth=0.3)
+    # Overlay individual benchmark scores as dots
+    for label, yi in zip(avg.index, y):
+        vals = df.loc[label].dropna().values
+        ax.scatter(vals, np.full_like(vals, yi), color='#333333', s=12, zorder=5, alpha=0.6)
 
-    ax.set_xticks(x)
-    ax.set_xticklabels(df.index, rotation=35, ha='right', fontsize=8)
-    ax.set_ylabel('Score')
-    ax.set_title('Overall Performance Comparison', fontsize=14, fontweight='bold')
-    ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=7, ncol=1)
-    ax.set_ylim(bottom=0)
+    # Annotate average
+    for yi, val in zip(y, avg):
+        if not np.isnan(val):
+            ax.text(val + 0.3, yi, f'{val:.1f}', va='center', fontsize=8, fontweight='bold')
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(avg.index, fontsize=9)
+    ax.set_xlabel('Average Score (dots = individual benchmarks)')
+    ax.set_title('Model Ranking by Average Score', fontsize=14, fontweight='bold')
     fig.tight_layout()
     save_fig(fig, 'bar_overall', output_dir, formats)
 
