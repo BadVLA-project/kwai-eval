@@ -10,6 +10,7 @@ import numpy as np
 from .config import (
     MODEL_NAMES, DATASET_NAMES, DATASET_INFO, DATASET_LABELS,
     MODEL_LABELS, PRIMARY_METRIC, AOT_DATASETS, BASE_MODEL,
+    OVERALL_BENCHMARKS,
 )
 
 
@@ -182,17 +183,27 @@ class ResultLoader:
 
     # ── Bulk loaders for plotting ────────────────────────────────────────
 
-    def load_overall_matrix(self, models=None, datasets=None):
-        """Return DataFrame: rows=models, cols=datasets, values=primary score."""
+    def load_overall_matrix(self, models=None):
+        """Return DataFrame: rows=models, cols=7 benchmarks (AoT averaged), values=0-100."""
         models = models or MODEL_NAMES
-        datasets = datasets or DATASET_NAMES
+        non_aot = [d for d in DATASET_NAMES if d not in AOT_DATASETS]
+
         data = {}
         for m in models:
             row = {}
-            for d in datasets:
+            # AoTBench: average of 5 sub-benchmarks
+            aot_scores = [self.get_primary_score(m, d) for d in AOT_DATASETS]
+            aot_valid = [s for s in aot_scores if not np.isnan(s)]
+            row['AoTBench'] = np.mean(aot_valid) if aot_valid else float('nan')
+            # Other benchmarks
+            for d in non_aot:
                 row[DATASET_LABELS[d]] = self.get_primary_score(m, d)
             data[MODEL_LABELS[m]] = row
-        return pd.DataFrame(data).T
+
+        # Ensure column order matches OVERALL_BENCHMARKS
+        df = pd.DataFrame(data).T
+        cols = [c for c in OVERALL_BENCHMARKS if c in df.columns]
+        return df[cols]
 
     def load_videomme_duration(self, models=None):
         """Return DataFrame: rows=models, cols=[short, medium, long, overall]."""

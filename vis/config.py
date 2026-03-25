@@ -42,9 +42,7 @@ AOT_MODELS = [k for k, v in MODEL_INFO.items() if v[1] == 'aot']
 TG_MODELS = [k for k, v in MODEL_INFO.items() if v[1] == 'tg']
 
 # ── Dataset registry ────────────────────────────────────────────────────
-# key = dataset_name string (from --data), value = (short_label, score_type)
-# score_type determines which loader to use in data_loader.py
-
+# Individual datasets (for data loading)
 DATASET_INFO = OrderedDict([
     ('AoTBench_ReverseFilm_16frame', ('AoT-RF', 'acc_csv')),
     ('AoTBench_UCF101_16frame',      ('AoT-UCF', 'acc_csv')),
@@ -64,8 +62,18 @@ DATASET_LABELS = {k: v[0] for k, v in DATASET_INFO.items()}
 
 AOT_DATASETS = [d for d in DATASET_NAMES if d.startswith('AoTBench_')]
 
-# ── Primary metric per dataset (for overall comparison) ─────────────────
-# Each returns a single float in 0-100 scale
+# Benchmarks for overall comparison (AoT sub-benchmarks merged into one)
+OVERALL_BENCHMARKS = [
+    'AoTBench',          # average of 5 sub-benchmarks
+    'FutureOmni',
+    'Charades-TL',
+    'MVBench',
+    'PTest',
+    'VideoMME',
+    'V-Holmes',
+]
+
+# ── Primary metric per dataset (for data loading) ──────────────────────
 PRIMARY_METRIC = {
     'AoTBench_ReverseFilm_16frame': 'overall_accuracy',
     'AoTBench_UCF101_16frame':      'overall_accuracy',

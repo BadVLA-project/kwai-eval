@@ -11,9 +11,9 @@ import sys
 
 from .style import apply_style
 from .data_loader import ResultLoader
-from .plot_heatmap import plot_master_heatmap, plot_aot_heatmap, plot_videomme_duration_heatmap
+from .plot_heatmap import plot_master_heatmap, plot_videomme_duration_heatmap
 from .plot_radar import plot_aot_radar, plot_tg_radar
-from .plot_bar import plot_overall_bar, plot_delta_bar, plot_aot_focused_bar
+from .plot_bar import plot_overall_bar, plot_delta_bar
 from .plot_breakdown import (
     plot_mvbench_breakdown, plot_videomme_tasktype,
     plot_videoholmes_breakdown, plot_perceptiontest_breakdown,
@@ -43,46 +43,40 @@ def main():
     print()
 
     # ── Heatmaps ─────────────────────────────────────────────────────────
-    print('[1/13] Master heatmap (models x benchmarks)')
+    print('[1/11] Master heatmap (models x 7 benchmarks)')
     plot_master_heatmap(loader, args.output_dir, fmts)
 
-    print('[2/13] AoT heatmap (models x 5 AoT variants)')
-    plot_aot_heatmap(loader, args.output_dir, fmts)
-
-    print('[3/13] VideoMME duration heatmap')
+    print('[2/11] VideoMME duration heatmap')
     plot_videomme_duration_heatmap(loader, args.output_dir, fmts)
 
     # ── Radar charts ─────────────────────────────────────────────────────
-    print('[4/13] AoT ablation radar')
+    print('[3/11] AoT ablation radar')
     plot_aot_radar(loader, args.output_dir, fmts)
 
-    print('[5/13] TG ablation radar')
+    print('[4/11] TG ablation radar')
     plot_tg_radar(loader, args.output_dir, fmts)
 
     # ── Bar charts ───────────────────────────────────────────────────────
-    print('[6/13] Overall bar chart')
+    print('[5/11] Model ranking bar')
     plot_overall_bar(loader, args.output_dir, fmts)
 
-    print('[7/13] Delta bar chart (vs base)')
+    print('[6/11] Delta bar chart (vs base)')
     plot_delta_bar(loader, args.output_dir, fmts)
 
-    print('[8/13] AoT focused bar with error bars')
-    plot_aot_focused_bar(loader, args.output_dir, fmts)
-
     # ── Breakdowns ───────────────────────────────────────────────────────
-    print('[9/13] MVBench 20 sub-tasks breakdown')
+    print('[7/11] MVBench 20 sub-tasks breakdown')
     plot_mvbench_breakdown(loader, args.output_dir, fmts)
 
-    print('[10/13] VideoMME task type breakdown')
+    print('[8/11] VideoMME task type breakdown')
     plot_videomme_tasktype(loader, args.output_dir, fmts)
 
-    print('[11/13] Video-Holmes question type breakdown')
+    print('[9/11] Video-Holmes question type breakdown')
     plot_videoholmes_breakdown(loader, args.output_dir, fmts)
 
-    print('[12/13] PerceptionTest multi-dimension breakdown')
+    print('[10/11] PerceptionTest multi-dimension breakdown')
     plot_perceptiontest_breakdown(loader, args.output_dir, fmts)
 
-    print('[13/13] CharadesTimeLens metrics breakdown')
+    print('[11/11] CharadesTimeLens metrics breakdown')
     plot_charades_breakdown(loader, args.output_dir, fmts)
 
     print()
