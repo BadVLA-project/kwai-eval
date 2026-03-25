@@ -442,14 +442,22 @@ def parquet_to_tsv(file_path):
 def fetch_aux_files(eval_file):
     file_root = osp.dirname(eval_file)
     file_name = osp.basename(eval_file)
+    parent_name = osp.basename(osp.dirname(file_root))
+    stem = osp.splitext(file_name)[0]
 
-    eval_id = osp.basename(file_root)
-    if eval_id[:3] == 'T20' and eval_id[9:11] == '_G':
-        model_name = osp.basename(osp.dirname(file_root))
+    # Prefer the parent directory when the file already follows the standard
+    # <model_name>_<dataset>.* naming, so reuse keeps working even if eval_id
+    # no longer matches the legacy T<day>_G<hash> pattern.
+    if parent_name and stem.startswith(parent_name + '_'):
+        model_name = parent_name
     else:
-        model_name = eval_id
+        eval_id = osp.basename(file_root)
+        if eval_id.startswith('T20'):
+            model_name = osp.basename(osp.dirname(file_root))
+        else:
+            model_name = eval_id
 
-    dataset_name = osp.splitext(file_name)[0][len(model_name) + 1:]
+    dataset_name = stem[len(model_name) + 1:]
     from vlmeval.dataset import SUPPORTED_DATASETS
     to_handle = []
     for d in SUPPORTED_DATASETS:

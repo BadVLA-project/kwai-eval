@@ -500,7 +500,9 @@ def infer_data_job_video(
         if _barrier_dir:
             # File-based barrier (launched via launch_workers.py, no torch.distributed).
             import time as _time
-            tag = f'infer_video_{dataset.dataset_name}'
+            # Include the concrete result file name so barrier flags remain unique
+            # across different models that evaluate the same dataset in one run.
+            tag = f'infer_video_{osp.splitext(result_file_name)[0]}'
             flag = osp.join(_barrier_dir, f'{tag}_rank{rank}')
             with open(flag, 'w') as _f:
                 _f.write('1')

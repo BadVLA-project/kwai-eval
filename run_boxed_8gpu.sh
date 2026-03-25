@@ -36,6 +36,8 @@ export DECORD_EOF_RETRY_MAX="${DECORD_EOF_RETRY_MAX:-102400}"
 
 REUSE="${REUSE:-0}"
 DELAY="${DELAY:-15}"
+EVAL_ID_MODE="${EVAL_ID_MODE:-day}"
+EVAL_ID="${EVAL_ID:-}"
 
 # ---------------------------------------------------------------------------
 # Direct answer mode: USE_COT=boxed → greedy, temperature=0
@@ -131,6 +133,12 @@ CMD=(
   --work-dir "${WORK_DIR}"
 )
 
+if [ -n "${EVAL_ID}" ]; then
+  CMD+=(--eval-id "${EVAL_ID}")
+else
+  CMD+=(--eval-id-mode "${EVAL_ID_MODE}")
+fi
+
 if [ "${REUSE}" = "1" ]; then
   CMD+=(--reuse)
 fi
@@ -139,6 +147,10 @@ echo "=================================================================="
 echo " [$(date '+%Y-%m-%d %H:%M:%S')] run_boxed_8gpu: USE_COT=boxed  TEMPERATURE=0"
 echo "   GPUs: 0-7  (全8卡)"
 echo "   work_dir: ${WORK_DIR}"
+echo "   eval_id_mode: ${EVAL_ID_MODE}"
+if [ -n "${EVAL_ID}" ]; then
+  echo "   eval_id: ${EVAL_ID}"
+fi
 echo "=================================================================="
 
 "${CMD[@]}"

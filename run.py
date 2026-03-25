@@ -188,6 +188,19 @@ You can launch the evaluation by setting either --data and --model or --config.
     parser.add_argument('--config', type=str, help='Path to the Config Json File')
     # Work Dir
     parser.add_argument('--work-dir', type=str, default='./outputs', help='select the output directory')
+    parser.add_argument(
+        '--eval-id-mode',
+        type=str,
+        default='day_hash',
+        choices=['day_hash', 'day'],
+        help='Directory naming strategy under each model: day_hash=T<day>_G<hash> (default), day=T<day>'
+    )
+    parser.add_argument(
+        '--eval-id',
+        type=str,
+        default=None,
+        help='Override the per-model output directory name directly; takes precedence over --eval-id-mode'
+    )
     # Infer + Eval or Infer Only
     parser.add_argument('--mode', type=str, default='all', choices=['all', 'infer', 'eval'])
     # API Kwargs, Apply to API VLMs and Judge API LLMs
@@ -211,6 +224,25 @@ You can launch the evaluation by setting either --data and --model or --config.
 
     args = parser.parse_args()
     return args
+
+
+def build_eval_id(args):
+    if args.eval_id is not None:
+        if not args.eval_id.strip():
+            raise ValueError('--eval-id must not be empty')
+        invalid_parts = [os.sep]
+        if os.altsep:
+            invalid_parts.append(os.altsep)
+        if any(part in args.eval_id for part in invalid_parts):
+            raise ValueError('--eval-id must be a single directory name, not a path')
+        return args.eval_id
+
+    date = timestr('day')
+    if args.eval_id_mode == 'day':
+        return f'T{date}'
+
+    commit_id = githash(digits=8)
+    return f'T{date}_G{commit_id}'
 
 
 def main():
@@ -373,8 +405,8 @@ def main():
         if model is not None and hasattr(model, 'cleanup_vllm'):
             model.cleanup_vllm()
         model = None
-        date, commit_id = timestr('day'), githash(digits=8)
-        eval_id = f"T{date}_G{commit_id}"
+        eval_id = build_eval_id(args)
+        logger.info(f'[EvalID] model={model_name}, eval_id={eval_id}, mode={args.eval_id_mode}')
 
         pred_root = osp.join(args.work_dir, model_name, eval_id)
         pred_root_meta = osp.join(args.work_dir, model_name)
