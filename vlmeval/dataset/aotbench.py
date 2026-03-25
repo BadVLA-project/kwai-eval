@@ -168,7 +168,10 @@ class AoTBench(VideoBaseDataset):
             for frame in frames:
                 message.append(dict(type='image', value=frame))
 
-        prompt = line['question']
+        # Strip legacy format-instruction suffix that may be baked into source data.
+        # Format is now controlled exclusively via model.post_prompt in inference_video.py.
+        _LEGACY_SUFFIX = "\nAnswer with the option's letter from the given choices directly."
+        prompt = str(line['question']).replace(_LEGACY_SUFFIX, '').rstrip()
         message.append(dict(type='text', value=prompt))
         return message
 
