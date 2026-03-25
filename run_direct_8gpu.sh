@@ -54,7 +54,7 @@ GPU_OFFSET=0
 # ---------------------------------------------------------------------------
 export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-16}"
 export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-16}"
-export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.80}"
+export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.70}"
 export VLLM_BUILD_WORKERS="${VLLM_BUILD_WORKERS:-2}"
 
 # ---------------------------------------------------------------------------
@@ -79,17 +79,13 @@ export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 # Datasets & Model
 # ---------------------------------------------------------------------------
 DATASETS=(
-  Video_Holmes_64frame
   AoTBench_ReverseFilm_16frame
   AoTBench_UCF101_16frame
   AoTBench_Rtime_t2v_16frame
   AoTBench_Rtime_v2t_16frame
   AoTBench_QA_16frame
-  FutureOmni_64frame
   CharadesTimeLens_1fps
   MVBench_MP4_1fps
-  PerceptionTest_val_16frame
-  Video-MME_64frame
 )
 
 MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"
@@ -107,6 +103,12 @@ MODELS=(
   Qwen3-VL-4B-Instruct_aot_ablation_exp9_t2v_binary_3way_mixed
   Qwen3-VL-4B-Instruct_tg_ablation_exp1_no_cot_v2
   Qwen3-VL-4B-Instruct_tg_ablation_exp2_cot_v2
+  Qwen3-VL-4B-Instruct_hier_seg_exp1_L2_only
+  Qwen3-VL-4B-Instruct_hier_seg_exp2_L3_seq
+  Qwen3-VL-4B-Instruct_hier_seg_exp3_L3_shuf
+  Qwen3-VL-4B-Instruct_hier_seg_exp4_L3_both
+  Qwen3-VL-4B-Instruct_hier_seg_exp5_L2_L3
+  Qwen3-VL-4B-Instruct_hier_seg_exp6_L1_L2_L3
 )
 
 WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_8gpu}"
