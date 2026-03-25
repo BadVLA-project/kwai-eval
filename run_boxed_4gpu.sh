@@ -6,8 +6,11 @@
 #                  temperature=0.7, max_new_tokens=2048
 #   GPU:           4,5,6,7  (后四卡)
 #
-# Usage:
-#   bash run_boxed_4gpu.sh
+# Usage (MUST run inside tmux/screen to survive SSH disconnection):
+#   tmux new -s eval
+#   bash run_boxed_4gpu.sh 2>&1 | tee ${WORK_DIR:-/tmp}/run_boxed_4gpu.log
+#   # Ctrl+B D to detach, tmux attach -t eval to reattach
+#
 #   REUSE=1 bash run_boxed_4gpu.sh          # skip already-done samples
 #   MODEL=Qwen3-VL-7B bash run_boxed_4gpu.sh
 # ==========================================================================

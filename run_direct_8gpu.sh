@@ -5,9 +5,12 @@
 #   USE_COT=0:    greedy, temperature=0, model answers directly
 #   GPU:          0,1,2,3,4,5,6,7  (全8卡)
 #
-# Usage:
-#   bash run_direct_8gpu.sh
-#   REUSE=1 bash run_direct_8gpu.sh
+# Usage (MUST run inside tmux/screen to survive SSH disconnection):
+#   tmux new -s eval
+#   bash run_direct_8gpu.sh 2>&1 | tee ${WORK_DIR:-/tmp}/run_direct_8gpu.log
+#   # Ctrl+B D to detach, tmux attach -t eval to reattach
+#
+#   REUSE=1 bash run_direct_8gpu.sh   # skip completed model x dataset
 #   MODEL=Qwen3-VL-7B bash run_direct_8gpu.sh
 # ==========================================================================
 set -euo pipefail

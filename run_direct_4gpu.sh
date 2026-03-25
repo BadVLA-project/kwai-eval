@@ -5,8 +5,11 @@
 #   USE_COT=0: greedy, temperature=0, model answers directly
 #   GPU:       0,1,2,3  (前四卡)
 #
-# Usage:
-#   bash run_direct_4gpu.sh
+# Usage (MUST run inside tmux/screen to survive SSH disconnection):
+#   tmux new -s eval
+#   bash run_direct_4gpu.sh 2>&1 | tee ${WORK_DIR:-/tmp}/run_direct_4gpu.log
+#   # Ctrl+B D to detach, tmux attach -t eval to reattach
+#
 #   REUSE=1 bash run_direct_4gpu.sh          # skip already-done samples
 #   MODEL=Qwen3-VL-7B bash run_direct_4gpu.sh
 # ==========================================================================
