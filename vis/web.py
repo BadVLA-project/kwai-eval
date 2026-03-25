@@ -807,7 +807,8 @@ function renderAotRadar() { renderRadar_('chartRadarAot', 'aot'); }
 function renderTgRadar() { renderRadar_('chartRadarTg', 'tg'); }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Chart: Delta Bar
+// Chart: Delta Heatmap  (rows=models, cols=benchmarks, cell=Δ vs base)
+// Green = improvement, Red = regression — mirrors the static PNG output
 // ══════════════════════════════════════════════════════════════════════════
 function renderDeltaBar() {
   const chart = ensureChart('chartDelta');
@@ -817,35 +818,91 @@ function renderDeltaBar() {
 
   // Only non-base selected models
   const models = DATA.models.filter(m => !m.isBase && selected.has(m.label));
-  if (!models.length) {
+  if (!models.length || !benchmarks.length) {
     chart.clear();
     chart.setOption({ title: { text: 'Select ablation models to compare', left: 'center',
                                top: 'center', textStyle: { color: '#999', fontSize: 14 } } });
     return;
   }
 
-  const series = models.map(m => ({
-    type: 'bar',
-    name: m.label,
-    data: benchmarks.map(b => {
+  // Build flat heatmap data: [col_idx, row_idx, value]
+  const heatData = [];
+  let vmax = 0.5;
+  models.forEach((m, ri) => {
+    benchmarks.forEach((b, ci) => {
       const base = baseData[b];
       const cur = (DATA.overall[m.label] || {})[b];
-      return (validNum(base) && validNum(cur)) ? Math.round((cur - base) * 100) / 100 : null;
-    }),
-    itemStyle: { color: m.color },
-  }));
+      if (validNum(base) && validNum(cur)) {
+        const delta = Math.round((cur - base) * 100) / 100;
+        heatData.push([ci, ri, delta]);
+        if (Math.abs(delta) > vmax) vmax = Math.abs(delta);
+      } else {
+        heatData.push([ci, ri, null]);
+      }
+    });
+  });
+  vmax = Math.ceil(vmax * 10) / 10;  // round up to 1dp
+
+  const rowH = Math.max(36, Math.min(64, Math.floor(380 / Math.max(models.length, 1))));
+  const chartH = Math.max(260, models.length * rowH + 120);
+  document.getElementById('chartDelta').style.minHeight = chartH + 'px';
+  chart.resize();
 
   chart.setOption({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    legend: { data: models.map(m => m.label), top: 0, type: 'scroll',
-              textStyle: { fontSize: 10 } },
-    grid: { left: 60, right: 20, top: 50, bottom: 80 },
+    tooltip: {
+      trigger: 'item',
+      formatter: p => {
+        const b = benchmarks[p.value[0]];
+        const m = models[p.value[1]];
+        const d = p.value[2];
+        const base = baseData[b];
+        const cur = (DATA.overall[m?.label] || {})[b];
+        const sign = d >= 0 ? '+' : '';
+        return `<b>${m?.label}</b><br>${b}: ${validNum(base) ? base.toFixed(1) : '—'}` +
+               ` → ${validNum(cur) ? cur.toFixed(1) : '—'}` +
+               `<br>Δ = <b>${sign}${validNum(d) ? d.toFixed(1) : '—'}</b>`;
+      }
+    },
+    grid: { left: 110, right: 120, top: 70, bottom: 60 },
     xAxis: {
       type: 'category', data: benchmarks,
-      axisLabel: { rotate: 25, fontSize: 11 },
+      position: 'top',
+      axisLabel: { rotate: 20, fontSize: 11, fontWeight: 600 },
+      splitArea: { show: true },
     },
-    yAxis: { type: 'value', name: 'Delta vs Base', splitLine: { lineStyle: { type: 'dashed' } } },
-    series,
+    yAxis: {
+      type: 'category', data: models.map(m => m.label),
+      axisLabel: { fontSize: 11 },
+      splitArea: { show: true },
+    },
+    visualMap: {
+      type: 'continuous',
+      min: -vmax, max: vmax,
+      calculable: true,
+      orient: 'vertical',
+      right: 10, top: 'center',
+      textStyle: { fontSize: 10 },
+      text: [`+${vmax}`, `-${vmax}`],
+      // RdYlGn 9-class diverging palette
+      inRange: { color: [
+        '#d73027','#f46d43','#fdae61','#fee08b','#ffffbf',
+        '#d9ef8b','#a6d96a','#66bd63','#1a9850'
+      ]},
+    },
+    series: [{
+      type: 'heatmap',
+      data: heatData,
+      label: {
+        show: true,
+        fontSize: 10, fontWeight: 700,
+        formatter: p => {
+          const v = p.value[2];
+          if (!validNum(v)) return '—';
+          return (v >= 0 ? '+' : '') + v.toFixed(1);
+        },
+      },
+      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.3)' } },
+    }],
   }, true);
 }
 

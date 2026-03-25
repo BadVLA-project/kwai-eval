@@ -13,8 +13,8 @@ from .style import apply_style
 from .data_loader import ResultLoader
 from .web import generate_dashboard, serve
 from .plot_heatmap import plot_master_heatmap, plot_videomme_duration_heatmap
-from .plot_radar import plot_aot_radar, plot_tg_radar
-from .plot_bar import plot_overall_bar, plot_delta_bar
+from .plot_radar import plot_aot_radar, plot_tg_radar, plot_aot_subsets_radar
+from .plot_bar import plot_overall_bar, plot_delta_bar, plot_rank_bump
 from .plot_breakdown import (
     plot_mvbench_breakdown, plot_videomme_tasktype,
     plot_videoholmes_breakdown, plot_perceptiontest_breakdown,
@@ -70,12 +70,18 @@ def main():
     print('[4/11] TG ablation radar')
     plot_tg_radar(loader, args.output_dir, fmts)
 
+    print('[4b/11] AoT 5 sub-benchmarks radar')
+    plot_aot_subsets_radar(loader, args.output_dir, fmts)
+
     # ── Bar charts ───────────────────────────────────────────────────────
     print('[5/11] Model ranking bar')
     plot_overall_bar(loader, args.output_dir, fmts)
 
-    print('[6/11] Delta bar chart (vs base)')
+    print('[6/11] Delta heatmap (vs base)')
     plot_delta_bar(loader, args.output_dir, fmts)
+
+    print('[6b/11] Cross-benchmark rank bump chart')
+    plot_rank_bump(loader, args.output_dir, fmts)
 
     # ── Breakdowns ───────────────────────────────────────────────────────
     print('[7/11] MVBench 20 sub-tasks breakdown')

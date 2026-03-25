@@ -69,16 +69,30 @@ def _radar(ax, labels, model_data, title, axis_ranges=None):
     ax.legend(loc='upper right', bbox_to_anchor=(1.35, 1.1), fontsize=7)
 
 
+_RADAR_MAX_MODELS = 5  # max ablation models on a single radar (+ base)
+
+
 def _prepare_radar_data(df, models_to_include, base_label):
-    """Normalize df and build plot data list."""
-    # Filter to only models present
+    """Normalize df and build plot data list.
+
+    Only the top-_RADAR_MAX_MODELS ablation models (by mean score) are kept
+    to prevent the radar from becoming an unreadable tangle of overlapping lines.
+    """
+    # Filter to only models present in df
     present = [m for m in models_to_include if MODEL_LABELS[m] in df.index]
     if base_label not in df.index:
         return [], [], {}, []
 
+    # Keep top-N by mean score (avoids clutter when many ablations exist)
+    if len(present) > _RADAR_MAX_MODELS:
+        scored = sorted(present,
+                        key=lambda m: df.loc[MODEL_LABELS[m]].mean(skipna=True),
+                        reverse=True)
+        present = scored[:_RADAR_MAX_MODELS]
+
     # Subset to relevant rows for normalization
     relevant_labels = [base_label] + [MODEL_LABELS[m] for m in present]
-    relevant_labels = [l for l in relevant_labels if l in df.index]
+    relevant_labels = [lbl for lbl in relevant_labels if lbl in df.index]
     sub = df.loc[relevant_labels].copy()
     sub = sub.fillna(sub.mean())  # fill NaN with column mean for normalization
 
@@ -138,3 +152,37 @@ def plot_tg_radar(loader, output_dir, formats):
     _radar(ax, labels, models_to_plot, 'TG Ablation (normalized per-axis)', ranges)
     fig.tight_layout()
     save_fig(fig, 'radar_tg_ablation', output_dir, formats)
+
+
+def plot_aot_subsets_radar(loader, output_dir, formats):
+    """Radar chart: AoT 5 sub-benchmarks as axes, each model as a polygon."""
+    df = loader.load_aot_subsets()
+    if df is None or df.empty:
+        print('  WARN: no AoT subset data found')
+        return
+
+    # include base + all aot ablation models
+    all_models = [BASE_MODEL] + AOT_MODELS
+    present_labels = [MODEL_LABELS[m] for m in all_models if MODEL_LABELS[m] in df.index]
+    if not present_labels:
+        print('  WARN: no models found for AoT subset radar')
+        return
+
+    sub = df.loc[present_labels].copy()
+    sub = sub.fillna(sub.mean())
+    normed, ranges = _normalize_per_axis(sub)
+    labels = list(df.columns)
+
+    models_to_plot = []
+    base_label = MODEL_LABELS[BASE_MODEL]
+    if base_label in normed.index:
+        models_to_plot.append((base_label, normed.loc[base_label].values, '#2c3e50', '--', 2.5))
+    for m in AOT_MODELS:
+        lbl = MODEL_LABELS[m]
+        if lbl in normed.index:
+            models_to_plot.append((lbl, normed.loc[lbl].values, MODEL_COLORS[m], '-', 1.2))
+
+    fig, ax = plt.subplots(figsize=(10, 8), subplot_kw=dict(polar=True))
+    _radar(ax, labels, models_to_plot, 'AoT Sub-benchmarks (normalized per-axis)', ranges)
+    fig.tight_layout()
+    save_fig(fig, 'radar_aot_subsets', output_dir, formats)

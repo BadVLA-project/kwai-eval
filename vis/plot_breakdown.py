@@ -1,11 +1,57 @@
 """Sub-category breakdown charts for detailed analysis."""
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 from .style import save_fig
-from .config import MODEL_LABELS, MODEL_COLORS, MODEL_NAMES
+from .config import MODEL_LABELS, MODEL_COLORS, MODEL_NAMES, BASE_MODEL
+
+
+def _plot_delta_heatmap(df, title, fig_id, output_dir, formats,
+                        figsize=None, annot_size=8):
+    """Plot a sub-task delta heatmap (rows=ablation models, cols=sub-tasks, cell=Δ vs base).
+
+    Green = improvement over base, Red = regression.
+    The base model row is excluded from the heatmap body; its scores are the reference.
+    """
+    base_label = MODEL_LABELS[BASE_MODEL]
+    if base_label not in df.index:
+        print(f'  WARN: base model not found, skipping delta heatmap for {fig_id}')
+        return
+
+    base_row = df.loc[base_label]
+    delta_df = df.drop(index=base_label).subtract(base_row, axis=1).dropna(how='all')
+
+    if delta_df.empty:
+        return
+
+    valid = delta_df.values[~pd.isnull(delta_df.values)]
+    vmax = float(max(abs(valid).max() if len(valid) else 1.0, 0.5))
+
+    auto_w = max(10, len(delta_df.columns) * 0.75 + 2)
+    auto_h = max(3.5, len(delta_df) * 0.6 + 1.5)
+    if figsize is None:
+        figsize = (auto_w, auto_h)
+    else:
+        figsize = (figsize[0] or auto_w, figsize[1] or auto_h)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    mask = delta_df.isnull()
+    sns.heatmap(delta_df, annot=True, fmt='+.1f', cmap='RdYlGn', mask=mask,
+                center=0, vmin=-vmax, vmax=vmax,
+                linewidths=0.5, linecolor='white', ax=ax,
+                cbar_kws={'label': f'Δ vs {base_label}', 'shrink': 0.7},
+                annot_kws={'size': annot_size})
+
+    ax.set_title(title, fontsize=13, fontweight='bold', pad=12)
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.yticks(rotation=0, fontsize=8)
+    fig.tight_layout()
+    save_fig(fig, fig_id, output_dir, formats)
 
 
 def plot_mvbench_breakdown(loader, output_dir, formats):
@@ -34,6 +80,10 @@ def plot_mvbench_breakdown(loader, output_dir, formats):
     fig.tight_layout()
     save_fig(fig, 'breakdown_mvbench', output_dir, formats)
 
+    _plot_delta_heatmap(df, 'MVBench Sub-task Delta vs Base',
+                        'delta_mvbench', output_dir, formats,
+                        figsize=(18, None), annot_size=7)
+
 
 def plot_videomme_tasktype(loader, output_dir, formats):
     """Chart 10: VideoMME 12 task types heatmap."""
@@ -59,6 +109,9 @@ def plot_videomme_tasktype(loader, output_dir, formats):
     plt.yticks(rotation=0, fontsize=8)
     fig.tight_layout()
     save_fig(fig, 'breakdown_vmme_task', output_dir, formats)
+
+    _plot_delta_heatmap(df, 'Video-MME Task Type Delta vs Base',
+                        'delta_vmme_task', output_dir, formats)
 
 
 def plot_videoholmes_breakdown(loader, output_dir, formats):
@@ -90,6 +143,9 @@ def plot_videoholmes_breakdown(loader, output_dir, formats):
     ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=7, ncol=1)
     fig.tight_layout()
     save_fig(fig, 'breakdown_videoholmes', output_dir, formats)
+
+    _plot_delta_heatmap(df, 'Video-Holmes Question Type Delta vs Base',
+                        'delta_videoholmes', output_dir, formats)
 
 
 def plot_perceptiontest_breakdown(loader, output_dir, formats):
@@ -138,6 +194,13 @@ def plot_perceptiontest_breakdown(loader, output_dir, formats):
     fig.tight_layout()
     save_fig(fig, 'breakdown_perceptiontest', output_dir, formats)
 
+    # Delta heatmap per split
+    for dim_name, df_dim in zip(dim_names, [dims[d] for d in dim_names]):
+        _plot_delta_heatmap(df_dim,
+                            f'PerceptionTest {dim_name} Delta vs Base',
+                            f'delta_perceptiontest_{dim_name.lower()}',
+                            output_dir, formats)
+
 
 def plot_charades_breakdown(loader, output_dir, formats):
     """Chart 13: CharadesTimeLens 4 metrics (mIoU, R@1_IoU=0.3/0.5/0.7) grouped bar."""
@@ -167,3 +230,6 @@ def plot_charades_breakdown(loader, output_dir, formats):
     ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=7, ncol=1)
     fig.tight_layout()
     save_fig(fig, 'breakdown_charades', output_dir, formats)
+
+    _plot_delta_heatmap(df, 'CharadesTimeLens Metrics Delta vs Base',
+                        'delta_charades', output_dir, formats, figsize=(8, None))
