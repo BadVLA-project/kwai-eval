@@ -284,3 +284,14 @@ class ResultLoader:
             else:
                 rows[MODEL_LABELS[m]] = data
         return pd.DataFrame(rows).T
+
+    def load_aot_subsets(self, models=None):
+        """Return DataFrame: rows=models, cols=5 AoT sub-benchmarks, values=accuracy 0-100."""
+        models = models or MODEL_NAMES
+        rows = {}
+        for m in models:
+            row = {}
+            for d in AOT_DATASETS:
+                row[DATASET_LABELS[d]] = self.get_primary_score(m, d)
+            rows[MODEL_LABELS[m]] = row
+        return pd.DataFrame(rows).T

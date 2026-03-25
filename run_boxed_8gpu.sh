@@ -112,7 +112,7 @@ MODELS=(
   Qwen3-VL-4B-Instruct_hier_seg_exp6_L1_L2_L3
 )
 
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_8gpu}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_boxed_8gpu}"
 
 # ---------------------------------------------------------------------------
 # Launch
@@ -136,7 +136,7 @@ if [ "${REUSE}" = "1" ]; then
 fi
 
 echo "=================================================================="
-echo " [$(date '+%Y-%m-%d %H:%M:%S')] run_direct_8gpu: USE_COT=boxed  TEMPERATURE=0"
+echo " [$(date '+%Y-%m-%d %H:%M:%S')] run_boxed_8gpu: USE_COT=boxed  TEMPERATURE=0"
 echo "   GPUs: 0-7  (全8卡)"
 echo "   work_dir: ${WORK_DIR}"
 echo "=================================================================="
