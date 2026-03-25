@@ -241,6 +241,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 
 /* ── Misc ──────────────────────────────────────────────────────── */
 .empty-msg{text-align:center;color:#999;padding:60px 20px;font-size:14px}
+.toolbar{display:flex;align-items:center;gap:10px;padding:10px 20px 0;flex-shrink:0}
+.toolbar label{font-size:12px;font-weight:600;color:#555;white-space:nowrap}
+.toolbar input[type=range]{flex:1;max-width:180px;accent-color:#1a73e8}
+.toolbar span{font-size:11px;color:#888;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -283,6 +287,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 
     <!-- Radar -->
     <div class="tab-panel" id="tab-radar">
+      <div class="card" style="margin-bottom:14px;padding:12px 20px">
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:700;color:#555">Radar Sensitivity</span>
+          <span style="font-size:11px;color:#bbb">Zoom out</span>
+          <input type="range" id="radarSens" min="1" max="20" value="10"
+                 style="flex:1;min-width:120px;max-width:240px;accent-color:#1a73e8"
+                 oninput="onRadarSens(this.value)">
+          <span style="font-size:11px;color:#bbb">Zoom in</span>
+          <span id="radarSensVal" style="font-size:12px;color:#1a73e8;font-weight:600;
+                min-width:70px">pad ×0.30</span>
+        </div>
+      </div>
       <div class="chart-row">
         <div class="card">
           <div class="card-title">AoT Ablation Radar (adaptive scale)</div>
@@ -360,6 +376,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 // ══════════════════════════════════════════════════════════════════════════
 const selected = new Set(DATA.models.map(m => m.label));
 const selectedBench = new Set(DATA.benchmarks);
+let radarPadFactor = 0.3;  // slider-controlled; smaller = more zoom
 let activeTab = 'overview';
 let activeSub = 'mvbench';
 const charts = {};  // id → ECharts instance
@@ -486,6 +503,19 @@ window.toggleAllBench = function(on) {
 window.onBenchToggle = function(b, checked) {
   if (checked) selectedBench.add(b); else selectedBench.delete(b);
   updateCharts();
+};
+
+// Logarithmic sensitivity mapping: slider 1→20 maps factor 2.0→0.05
+function sliderToFactor(v) {
+  return 2.0 * Math.pow(0.025, (v - 1) / 19);
+}
+
+window.onRadarSens = function(v) {
+  radarPadFactor = sliderToFactor(+v);
+  document.getElementById('radarSensVal').textContent =
+    'pad ×' + radarPadFactor.toFixed(2);
+  renderAotRadar();
+  renderTgRadar();
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -719,14 +749,20 @@ function renderRadar_(chartId, groupFilter) {
     rawScores[m.label] = benchmarks.map(b => d[b] ?? null);
   });
 
-  // Adaptive per-axis range: center on data; min span = 8pp; pad = max(3, spread*0.5)
+  // Adaptive per-axis range driven by radarPadFactor (slider-controlled)
+  // factor=0.3 (slider mid): 0.2pp spread → ~2pp window; factor=0.05 (full zoom): ~0.3pp window
   const ranges = benchmarks.map((b, i) => {
     const vs = relevant.map(m => rawScores[m.label][i]).filter(validNum);
     if (!vs.length) return [0, 100];
     const lo = Math.min(...vs), hi = Math.max(...vs);
-    const pad = Math.max(3, (hi - lo) * 0.5);
+    const pad = Math.max(radarPadFactor * 1.5, (hi - lo) * radarPadFactor);
     let mn = Math.max(0, lo - pad), mx = Math.min(100, hi + pad);
-    if (mx - mn < 8) { const mid = (mn + mx) / 2; mn = Math.max(0, mid - 4); mx = Math.min(100, mid + 4); }
+    const minSpan = Math.max(0.3, radarPadFactor * 6);
+    if (mx - mn < minSpan) {
+      const mid = (mn + mx) / 2;
+      mn = Math.max(0, mid - minSpan / 2);
+      mx = Math.min(100, mid + minSpan / 2);
+    }
     return [mn, mx];
   });
 
@@ -925,7 +961,17 @@ window.addEventListener('resize', () => {
 // Init
 // ══════════════════════════════════════════════════════════════════════════
 buildModelPanel();
+buildBenchmarkPanel();
 setupTabs();
+// Sync radar sensitivity label with slider default
+(function() {
+  const s = document.getElementById('radarSens');
+  if (s) {
+    radarPadFactor = sliderToFactor(+s.value);
+    document.getElementById('radarSensVal').textContent =
+      'pad \u00d7' + radarPadFactor.toFixed(2);
+  }
+})();
 updateCharts();
 
 </script>
