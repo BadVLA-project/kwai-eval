@@ -137,3 +137,33 @@ def plot_perceptiontest_breakdown(loader, output_dir, formats):
     fig.suptitle('PerceptionTest Multi-Dimension Breakdown', fontsize=14, fontweight='bold', y=1.02)
     fig.tight_layout()
     save_fig(fig, 'breakdown_perceptiontest', output_dir, formats)
+
+
+def plot_charades_breakdown(loader, output_dir, formats):
+    """Chart 13: CharadesTimeLens 4 metrics (mIoU, R@1_IoU=0.3/0.5/0.7) grouped bar."""
+    df = loader.load_charades_metrics()
+    if df.empty:
+        print('  WARN: no CharadesTimeLens data, skipping breakdown')
+        return
+
+    label_to_color = {MODEL_LABELS[m]: MODEL_COLORS[m] for m in MODEL_NAMES}
+
+    n_models = len(df.index)
+    n_metrics = len(df.columns)
+    x = np.arange(n_metrics)
+    width = 0.8 / n_models
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, model_label in enumerate(df.index):
+        vals = df.loc[model_label].values
+        color = label_to_color.get(model_label, '#888888')
+        ax.bar(x + i * width - 0.4 + width / 2, vals, width,
+               label=model_label, color=color, edgecolor='white', linewidth=0.3)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(df.columns, rotation=0, fontsize=9)
+    ax.set_ylabel('Score (%)')
+    ax.set_title('CharadesTimeLens Metrics Breakdown', fontsize=14, fontweight='bold')
+    ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=7, ncol=1)
+    fig.tight_layout()
+    save_fig(fig, 'breakdown_charades', output_dir, formats)

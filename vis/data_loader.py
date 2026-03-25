@@ -261,3 +261,15 @@ class ResultLoader:
                     split, cat = key.split('/', 1)
                     splits.setdefault(split, {}).setdefault(MODEL_LABELS[m], {})[cat] = val
         return {s: pd.DataFrame(d).T for s, d in splits.items()}
+
+    def load_charades_metrics(self, models=None):
+        """Return DataFrame: rows=models, cols=[mIoU, R@1_IoU=0.3, R@1_IoU=0.5, R@1_IoU=0.7]."""
+        models = models or MODEL_NAMES
+        rows = {}
+        for m in models:
+            data = self.load_dataset_score(m, 'CharadesTimeLens_1fps')
+            if data is None:
+                rows[MODEL_LABELS[m]] = {}
+            else:
+                rows[MODEL_LABELS[m]] = data
+        return pd.DataFrame(rows).T
