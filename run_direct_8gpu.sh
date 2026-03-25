@@ -52,10 +52,10 @@ GPU_OFFSET=0
 # vLLM settings for 80GB GPUs
 # 8-GPU note: reduce VLLM_BUILD_WORKERS to avoid CPU oversubscription
 # ---------------------------------------------------------------------------
-export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-32}"
-export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-64}"
-export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
-export VLLM_BUILD_WORKERS="${VLLM_BUILD_WORKERS:-4}"
+export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-16}"
+export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-16}"
+export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.80}"
+export VLLM_BUILD_WORKERS="${VLLM_BUILD_WORKERS:-2}"
 
 # ---------------------------------------------------------------------------
 # HF / offline settings
