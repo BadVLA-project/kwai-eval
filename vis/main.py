@@ -11,7 +11,7 @@ import sys
 
 from .style import apply_style
 from .data_loader import ResultLoader
-from .web import generate_dashboard
+from .web import generate_dashboard, serve
 from .plot_heatmap import plot_master_heatmap, plot_videomme_duration_heatmap
 from .plot_radar import plot_aot_radar, plot_tg_radar
 from .plot_bar import plot_overall_bar, plot_delta_bar
@@ -28,6 +28,8 @@ def main():
     parser.add_argument('--output_dir', default='vis/output', help='Output directory for figures')
     parser.add_argument('--format', nargs='+', default=['png'], help='Output figure formats')
     parser.add_argument('--web', action='store_true', help='Generate interactive HTML dashboard only')
+    parser.add_argument('--serve', action='store_true', help='Start HTTP server (auto-regenerates on reload)')
+    parser.add_argument('--port', type=int, default=8890, help='Port for --serve mode')
     args = parser.parse_args()
 
     if not os.path.isdir(args.work_dir):
@@ -36,6 +38,10 @@ def main():
 
     loader = ResultLoader(args.work_dir)
     os.makedirs(args.output_dir, exist_ok=True)
+
+    if args.serve:
+        serve(loader, port=args.port)
+        return
 
     if args.web:
         out = os.path.join(args.output_dir, 'dashboard.html')

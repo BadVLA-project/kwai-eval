@@ -95,6 +95,41 @@ def generate_dashboard(loader, output_path):
     print(f'  Dashboard saved: {output_path}')
 
 
+def serve(loader, port=8890):
+    """Serve the dashboard on localhost:port, regenerating HTML on each browser request."""
+    import http.server
+    import socketserver
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            data = export_data(loader)
+            data_json = json.dumps(data, ensure_ascii=False)
+            html = _TEMPLATE.replace('/**__DATA__**/', f'const DATA = {data_json};')
+            content = html.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    socketserver.TCPServer.allow_reuse_address = True
+    with socketserver.TCPServer(('', port), _Handler) as httpd:
+        import socket
+        hostname = socket.gethostname()
+        print(f'  Listening on 0.0.0.0:{port}')
+        print(f'  Remote:  http://{hostname}:{port}/')
+        print(f'  Local:   http://localhost:{port}/')
+        print('  (or SSH tunnel: ssh -L {p}:localhost:{p} <server>)'.format(p=port))
+        print('  Press Ctrl+C to stop.')
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print('\n  Server stopped.')
+
+
 # ── CLI entry ────────────────────────────────────────────────────────────
 
 def main():
@@ -102,11 +137,16 @@ def main():
     parser = argparse.ArgumentParser(description='Generate interactive dashboard')
     parser.add_argument('--work_dir', required=True)
     parser.add_argument('-o', '--output', default='vis/output/dashboard.html')
+    parser.add_argument('--serve', action='store_true', help='Start HTTP server instead of writing file')
+    parser.add_argument('--port', type=int, default=8890)
     args = parser.parse_args()
 
     loader = ResultLoader(args.work_dir)
-    os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
-    generate_dashboard(loader, args.output)
+    if args.serve:
+        serve(loader, port=args.port)
+    else:
+        os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
+        generate_dashboard(loader, args.output)
 
 
 # ── HTML template ────────────────────────────────────────────────────────
@@ -147,6 +187,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 .model-item label{font-size:12px;cursor:pointer;user-select:none;white-space:nowrap;
                   overflow:hidden;text-overflow:ellipsis}
 .model-item.is-base label{font-weight:700}
+.sidebar-divider{height:1px;background:#e0e0e0;margin:0 12px}
+.bench-item{display:flex;align-items:center;padding:3px 4px;border-radius:4px;
+            cursor:pointer;margin:1px 0}
+.bench-item:hover{background:#f5f5f5}
+.bench-item input{margin-right:7px}
+.bench-item label{font-size:12px;cursor:pointer;user-select:none}
 
 /* ── Main ──────────────────────────────────────────────────────── */
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
@@ -206,6 +252,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     <p>Toggle models to compare</p>
   </div>
   <div class="model-panel" id="modelPanel"></div>
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-header" style="border-bottom:none;padding:12px 16px 4px">
+    <h1>Benchmarks</h1>
+  </div>
+  <div class="model-panel" id="benchPanel"
+       style="flex:0 0 auto;max-height:220px;overflow-y:auto"></div>
 </div>
 
 <!-- Main -->
@@ -233,11 +285,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     <div class="tab-panel" id="tab-radar">
       <div class="chart-row">
         <div class="card">
-          <div class="card-title">AoT Ablation Radar (normalized per-axis)</div>
+          <div class="card-title">AoT Ablation Radar (adaptive scale)</div>
           <div class="chart-box" id="chartRadarAot" style="min-height:500px"></div>
         </div>
         <div class="card">
-          <div class="card-title">TG Ablation Radar (normalized per-axis)</div>
+          <div class="card-title">TG Ablation Radar (adaptive scale)</div>
           <div class="chart-box" id="chartRadarTg" style="min-height:500px"></div>
         </div>
       </div>
@@ -307,6 +359,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 // State
 // ══════════════════════════════════════════════════════════════════════════
 const selected = new Set(DATA.models.map(m => m.label));
+const selectedBench = new Set(DATA.benchmarks);
 let activeTab = 'overview';
 let activeSub = 'mvbench';
 const charts = {};  // id → ECharts instance
@@ -316,6 +369,9 @@ const charts = {};  // id → ECharts instance
 // ══════════════════════════════════════════════════════════════════════════
 function getSelectedLabels() {
   return DATA.models.filter(m => selected.has(m.label)).map(m => m.label);
+}
+function getSelectedBenchmarks() {
+  return DATA.benchmarks.filter(b => selectedBench.has(b));
 }
 function modelByLabel(label) {
   return DATA.models.find(m => m.label === label);
@@ -400,6 +456,39 @@ window.onModelToggle = function(label, checked) {
 };
 
 // ══════════════════════════════════════════════════════════════════════════
+// Sidebar: benchmark panel
+// ══════════════════════════════════════════════════════════════════════════
+function buildBenchmarkPanel() {
+  const panel = document.getElementById('benchPanel');
+  let html = '<div class="group-header">' +
+    '<span class="group-btns">' +
+    '<button onclick="toggleAllBench(true)">All</button>' +
+    '<button onclick="toggleAllBench(false)">None</button>' +
+    '</span></div>';
+  DATA.benchmarks.forEach(b => {
+    html += `<div class="bench-item">` +
+      `<input type="checkbox" id="bcb-${b}" checked ` +
+      `onchange="onBenchToggle('${b}',this.checked)">` +
+      `<label for="bcb-${b}">${b}</label></div>`;
+  });
+  panel.innerHTML = html;
+}
+
+window.toggleAllBench = function(on) {
+  DATA.benchmarks.forEach(b => {
+    const cb = document.getElementById('bcb-' + b);
+    if (cb) cb.checked = on;
+    if (on) selectedBench.add(b); else selectedBench.delete(b);
+  });
+  updateCharts();
+};
+
+window.onBenchToggle = function(b, checked) {
+  if (checked) selectedBench.add(b); else selectedBench.delete(b);
+  updateCharts();
+};
+
+// ══════════════════════════════════════════════════════════════════════════
 // Tabs
 // ══════════════════════════════════════════════════════════════════════════
 function setupTabs() {
@@ -456,7 +545,7 @@ let tableSortAsc = false;
 function renderScoreTable() {
   const wrap = document.getElementById('scoreTableWrap');
   const labels = getSelectedLabels();
-  const benchmarks = DATA.benchmarks;
+  const benchmarks = getSelectedBenchmarks();
   if (!labels.length) { wrap.innerHTML = '<p class="empty-msg">Select at least one model</p>'; return; }
 
   // Compute data rows
@@ -537,7 +626,7 @@ function renderRanking() {
   const chart = ensureChart('chartRanking');
   if (!chart) return;
   const labels = getSelectedLabels();
-  const benchmarks = DATA.benchmarks;
+  const benchmarks = getSelectedBenchmarks();
 
   // Compute averages
   const items = labels.map(label => {
@@ -610,14 +699,13 @@ function renderRanking() {
 function renderRadar_(chartId, groupFilter) {
   const chart = ensureChart(chartId);
   if (!chart) return;
-  const labels = getSelectedLabels();
-  const benchmarks = DATA.benchmarks;
+  const benchmarks = getSelectedBenchmarks();
 
   // Filter to relevant models (base + matching group)
   const relevant = DATA.models.filter(m =>
     (m.isBase || m.group === groupFilter) && selected.has(m.label)
   );
-  if (relevant.length < 2) {
+  if (relevant.length < 2 || !benchmarks.length) {
     chart.clear();
     chart.setOption({ title: { text: 'Select at least 2 models', left: 'center', top: 'center',
                                textStyle: { color: '#999', fontSize: 14 } } });
@@ -631,42 +719,31 @@ function renderRadar_(chartId, groupFilter) {
     rawScores[m.label] = benchmarks.map(b => d[b] ?? null);
   });
 
-  // Per-axis normalization
-  const n = benchmarks.length;
-  const colMin = new Array(n).fill(Infinity);
-  const colMax = new Array(n).fill(-Infinity);
-  relevant.forEach(m => {
-    rawScores[m.label].forEach((v, i) => {
-      if (validNum(v)) { colMin[i] = Math.min(colMin[i], v); colMax[i] = Math.max(colMax[i], v); }
-    });
-  });
+  // Adaptive per-axis range: center on data; min span = 8pp; pad = max(3, spread*0.5)
   const ranges = benchmarks.map((b, i) => {
-    let span = colMax[i] - colMin[i];
-    if (span === 0) span = 1;
-    const margin = span * 0.1;
-    return [colMin[i] - margin, colMax[i] + margin];
+    const vs = relevant.map(m => rawScores[m.label][i]).filter(validNum);
+    if (!vs.length) return [0, 100];
+    const lo = Math.min(...vs), hi = Math.max(...vs);
+    const pad = Math.max(3, (hi - lo) * 0.5);
+    let mn = Math.max(0, lo - pad), mx = Math.min(100, hi + pad);
+    if (mx - mn < 8) { const mid = (mn + mx) / 2; mn = Math.max(0, mid - 4); mx = Math.min(100, mid + 4); }
+    return [mn, mx];
   });
 
   const indicator = benchmarks.map((b, i) => ({
-    name: `${b}\n(${ranges[i][0].toFixed(0)}~${ranges[i][1].toFixed(0)})`,
-    max: 1,
+    name: `${b}\n(${ranges[i][0].toFixed(1)}~${ranges[i][1].toFixed(1)})`,
+    min: ranges[i][0], max: ranges[i][1],
   }));
 
-  const series = relevant.map(m => {
-    const normed = rawScores[m.label].map((v, i) => {
-      if (!validNum(v)) return 0;
-      return (v - ranges[i][0]) / (ranges[i][1] - ranges[i][0]);
-    });
-    return {
-      value: normed,
-      name: m.label,
-      lineStyle: m.isBase ? { type: 'dashed', width: 3 } : { width: 2 },
-      areaStyle: { opacity: 0.05 },
-      itemStyle: { color: m.color },
-      symbol: 'circle',
-      symbolSize: 4,
-    };
-  });
+  const series = relevant.map(m => ({
+    value: rawScores[m.label].map((v, i) => validNum(v) ? v : ranges[i][0]),
+    name: m.label,
+    lineStyle: m.isBase ? { type: 'dashed', width: 3 } : { width: 2 },
+    areaStyle: { opacity: 0.05 },
+    itemStyle: { color: m.color },
+    symbol: 'circle',
+    symbolSize: 4,
+  }));
 
   chart.setOption({
     tooltip: {
@@ -699,7 +776,7 @@ function renderTgRadar() { renderRadar_('chartRadarTg', 'tg'); }
 function renderDeltaBar() {
   const chart = ensureChart('chartDelta');
   if (!chart) return;
-  const benchmarks = DATA.benchmarks;
+  const benchmarks = getSelectedBenchmarks();
   const baseData = DATA.overall[DATA.baseLabel] || {};
 
   // Only non-base selected models
