@@ -8,7 +8,7 @@
 #
 # Usage (MUST run inside tmux/screen to survive SSH disconnection):
 #   tmux new -s eval
-#   bash run_boxed_8gpu.sh 2>&1 | tee ${WORK_DIR:-/tmp}/run_boxed_8gpu.log
+#   REUSE=1 bash run_boxed_8gpu.sh 2>&1 | tee ${WORK_DIR:-/tmp}/run_boxed_8gpu.log
 #   # Ctrl+B D to detach, tmux attach -t eval to reattach
 #
 #   REUSE=1 bash run_boxed_8gpu.sh

@@ -11,6 +11,7 @@ import sys
 
 from .style import apply_style
 from .data_loader import ResultLoader
+from .web import generate_dashboard
 from .plot_heatmap import plot_master_heatmap, plot_videomme_duration_heatmap
 from .plot_radar import plot_aot_radar, plot_tg_radar
 from .plot_bar import plot_overall_bar, plot_delta_bar
@@ -26,15 +27,22 @@ def main():
     parser.add_argument('--work_dir', required=True, help='Path to WORK_DIR with score files')
     parser.add_argument('--output_dir', default='vis/output', help='Output directory for figures')
     parser.add_argument('--format', nargs='+', default=['png'], help='Output figure formats')
+    parser.add_argument('--web', action='store_true', help='Generate interactive HTML dashboard only')
     args = parser.parse_args()
 
     if not os.path.isdir(args.work_dir):
         print(f'ERROR: work_dir does not exist: {args.work_dir}')
         sys.exit(1)
 
-    apply_style()
     loader = ResultLoader(args.work_dir)
     os.makedirs(args.output_dir, exist_ok=True)
+
+    if args.web:
+        out = os.path.join(args.output_dir, 'dashboard.html')
+        generate_dashboard(loader, out)
+        return
+
+    apply_style()
     fmts = tuple(args.format)
 
     print(f'Work dir:   {args.work_dir}')
