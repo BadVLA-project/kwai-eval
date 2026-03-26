@@ -49,13 +49,15 @@ def export_data(loader):
     """Export all chart data as a JSON-serializable dict."""
     data = {}
 
-    # Model registry
+    # Dynamic model registry (registered + auto-discovered)
+    all_model_info = loader.get_all_model_info()
     data['models'] = [
         {'key': k, 'label': v[0], 'group': v[1], 'color': v[2],
          'isBase': k == BASE_MODEL}
-        for k, v in MODEL_INFO.items()
+        for k, v in all_model_info.items()
     ]
-    data['baseLabel'] = MODEL_LABELS[BASE_MODEL]
+    base_label = MODEL_LABELS.get(BASE_MODEL, BASE_MODEL)
+    data['baseLabel'] = base_label
     data['benchmarks'] = list(OVERALL_BENCHMARKS)
 
     # Overall matrix (models × 7 benchmarks)
@@ -79,6 +81,9 @@ def export_data(loader):
 
     # Charades metrics
     data['charades'] = _df_to_dict(loader.load_charades_metrics())
+
+    # Evaluation completeness
+    data['completeness'] = loader.check_completeness()
 
     return _sanitize(data)
 
@@ -239,6 +244,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 .sub-panel{display:none}
 .sub-panel.active{display:block}
 
+/* ── Completeness table ────────────────────────────────────────── */
+.comp-table{width:100%;border-collapse:collapse;font-size:12px}
+.comp-table th{position:sticky;top:0;background:#fafafa;padding:8px 10px;
+               text-align:center;font-weight:600;border-bottom:2px solid #e0e0e0;white-space:nowrap}
+.comp-table th:first-child{text-align:left}
+.comp-table td{padding:6px 10px;text-align:center;border-bottom:1px solid #f0f0f0}
+.comp-table td:first-child{text-align:left;font-weight:600;white-space:nowrap}
+.comp-table tr.incomplete-row{background:#fff8f8}
+.badge-done{display:inline-block;width:18px;height:18px;line-height:18px;border-radius:50%;
+            background:#27ae60;color:#fff;font-size:11px;font-weight:700;text-align:center}
+.badge-miss{display:inline-block;width:18px;height:18px;line-height:18px;border-radius:50%;
+            background:#e74c3c;color:#fff;font-size:11px;font-weight:700;text-align:center}
+.pct-bar-wrap{display:inline-flex;align-items:center;gap:6px;min-width:100px}
+.pct-bar{height:8px;border-radius:4px;background:#eee;flex:1;min-width:60px;overflow:hidden}
+.pct-bar-fill{height:100%;border-radius:4px;transition:width .3s}
+.warn-badge{display:inline-block;background:#e67e22;color:#fff;border-radius:3px;
+            font-size:10px;padding:1px 5px;margin-left:4px;vertical-align:middle}
+
 /* ── Misc ──────────────────────────────────────────────────────── */
 .empty-msg{text-align:center;color:#999;padding:60px 20px;font-size:14px}
 .toolbar{display:flex;align-items:center;gap:10px;padding:10px 20px 0;flex-shrink:0}
@@ -271,6 +294,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     <button class="tab-btn" data-tab="radar">Radar</button>
     <button class="tab-btn" data-tab="delta">Delta</button>
     <button class="tab-btn" data-tab="breakdown">Breakdown</button>
+    <button class="tab-btn" data-tab="completeness">Completeness ⚠</button>
   </div>
   <div class="content" id="content">
     <!-- Overview -->
@@ -365,6 +389,22 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
         </div>
       </div>
     </div>
+
+    <!-- Completeness -->
+    <div class="tab-panel" id="tab-completeness">
+      <div class="card">
+        <div class="card-title">评测完整性检查 · Evaluation Completeness</div>
+        <p style="font-size:12px;color:#888;margin-bottom:12px">
+          绿色 ✓ 表示已找到评测文件；红色 ✗ 表示缺失。带
+          <span class="warn-badge">未完整</span> 标记的模型评测尚未完成。
+        </p>
+        <div id="compTableWrap" style="overflow-x:auto"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">完整度概览 · Completeness Overview</div>
+        <div class="chart-box" id="chartCompleteness" style="min-height:400px"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -433,7 +473,7 @@ function buildModelPanel() {
   DATA.models.forEach(m => {
     (groups[m.group] = groups[m.group] || []).push(m);
   });
-  const groupNames = {'base': 'Base', 'aot': 'AoT Ablation', 'tg': 'TG Ablation'};
+  const groupNames = {'base': 'Base', 'aot': 'AoT Ablation', 'tg': 'TG Ablation', 'extra': 'Auto-discovered'};
   let html = '';
   for (const [g, label] of Object.entries(groupNames)) {
     const models = groups[g] || [];
@@ -553,6 +593,7 @@ function updateCharts() {
     case 'overview': renderScoreTable(); renderRanking(); break;
     case 'radar': renderAotRadar(); renderTgRadar(); break;
     case 'delta': renderDeltaBar(); break;
+    case 'completeness': renderCompletenessTable(); renderCompletenessChart(); break;
     case 'breakdown':
       switch (activeSub) {
         case 'mvbench': renderGroupedBar('chartMvbench', DATA.mvbench, 'MVBench Sub-tasks'); break;
@@ -1008,6 +1049,120 @@ function renderPerception() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// Chart: Completeness Table & Bar
+// ══════════════════════════════════════════════════════════════════════════
+function renderCompletenessTable() {
+  const wrap = document.getElementById('compTableWrap');
+  if (!wrap) return;
+  const comp = DATA.completeness;
+  if (!comp) { wrap.innerHTML = '<p class="empty-msg">No completeness data</p>'; return; }
+
+  // Collect all dataset labels in order
+  const firstKey = Object.keys(comp)[0];
+  if (!firstKey) { wrap.innerHTML = '<p class="empty-msg">No models found</p>'; return; }
+  const dsKeys = Object.keys(comp[firstKey].datasets);
+  const dsLabels = dsKeys.map(k => comp[firstKey].datasets[k].label);
+
+  let html = '<table class="comp-table"><thead><tr>';
+  html += '<th>Model</th><th>Complete</th>';
+  dsLabels.forEach(l => { html += `<th>${l}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  Object.entries(comp).forEach(([mKey, info]) => {
+    const isIncomplete = info.pct < 100;
+    html += `<tr class="${isIncomplete ? 'incomplete-row' : ''}">`;
+    // Model name + warn badge
+    const warnHtml = isIncomplete
+      ? `<span class="warn-badge">未完整 ${info.complete_count}/${info.total_count}</span>`
+      : '';
+    const pctColor = info.pct >= 100 ? '#27ae60' : info.pct >= 50 ? '#e67e22' : '#e74c3c';
+    html += `<td>
+      <span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;
+        background:${info.color};margin-right:4px;vertical-align:middle"></span>
+      ${info.label}${warnHtml}</td>`;
+    // Progress bar
+    html += `<td>
+      <div class="pct-bar-wrap">
+        <div class="pct-bar">
+          <div class="pct-bar-fill" style="width:${info.pct}%;background:${pctColor}"></div>
+        </div>
+        <span style="font-size:11px;color:${pctColor};font-weight:700">${info.pct}%</span>
+      </div>
+    </td>`;
+    // Per-dataset status
+    dsKeys.forEach(dk => {
+      const ds = info.datasets[dk];
+      if (ds.done) {
+        html += `<td><span class="badge-done" title="${ds.path || ''}">✓</span></td>`;
+      } else {
+        html += `<td><span class="badge-miss">✗</span></td>`;
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+function renderCompletenessChart() {
+  const chart = ensureChart('chartCompleteness');
+  if (!chart) return;
+  const comp = DATA.completeness;
+  if (!comp) { chart.clear(); return; }
+
+  const entries = Object.entries(comp);
+  // Sort by pct ascending so incomplete models show prominently
+  entries.sort((a, b) => a[1].pct - b[1].pct);
+
+  const labels = entries.map(([, v]) => v.label);
+  const pcts = entries.map(([, v]) => v.pct);
+  const colors = entries.map(([, v]) => {
+    if (v.pct >= 100) return '#27ae60';
+    if (v.pct >= 50)  return '#e67e22';
+    return '#e74c3c';
+  });
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: params => {
+        const idx = params[0].dataIndex;
+        const [mKey, info] = entries[idx];
+        let tip = `<b>${info.label}</b><br>完成度: ${info.pct}% (${info.complete_count}/${info.total_count})<br><br>`;
+        Object.entries(info.datasets).forEach(([dk, ds]) => {
+          tip += `${ds.done ? '✅' : '❌'} ${ds.label}<br>`;
+        });
+        return tip;
+      }
+    },
+    grid: { left: 120, right: 60, top: 30, bottom: 30 },
+    xAxis: {
+      type: 'value', min: 0, max: 100,
+      axisLabel: { formatter: '{value}%' },
+      splitLine: { lineStyle: { type: 'dashed' } },
+    },
+    yAxis: {
+      type: 'category',
+      data: labels,
+      axisLabel: { fontSize: 11 },
+    },
+    series: [{
+      type: 'bar',
+      data: pcts.map((v, i) => ({ value: v, itemStyle: { color: colors[i] } })),
+      barWidth: '60%',
+      label: {
+        show: true, position: 'right', fontSize: 11,
+        formatter: p => {
+          const [, info] = entries[p.dataIndex];
+          return `${p.value.toFixed(0)}%  (${info.complete_count}/${info.total_count})`;
+        },
+      },
+    }],
+  }, true);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // Resize handler
 // ══════════════════════════════════════════════════════════════════════════
 window.addEventListener('resize', () => {
@@ -1027,6 +1182,15 @@ setupTabs();
     radarPadFactor = sliderToFactor(+s.value);
     document.getElementById('radarSensVal').textContent =
       'pad \u00d7' + radarPadFactor.toFixed(2);
+  }
+})();
+// Mark completeness tab if any model is incomplete
+(function() {
+  const comp = DATA.completeness || {};
+  const hasIncomplete = Object.values(comp).some(v => v.pct < 100);
+  if (hasIncomplete) {
+    const btn = document.querySelector('.tab-btn[data-tab="completeness"]');
+    if (btn) btn.style.color = '#e67e22';
   }
 })();
 updateCharts();
