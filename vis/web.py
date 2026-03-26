@@ -414,7 +414,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 // ══════════════════════════════════════════════════════════════════════════
 // State
 // ══════════════════════════════════════════════════════════════════════════
-const selected = new Set(DATA.models.map(m => m.label));
+// selected stores model *keys* (directory names) — unique and safe as DOM ids
+const selected = new Set(DATA.models.map(m => m.key));
 const selectedBench = new Set(DATA.benchmarks);
 let radarPadFactor = 0.3;  // slider-controlled; smaller = more zoom
 let activeTab = 'overview';
@@ -424,8 +425,12 @@ const charts = {};  // id → ECharts instance
 // ══════════════════════════════════════════════════════════════════════════
 // Helpers
 // ══════════════════════════════════════════════════════════════════════════
+function getSelectedKeys() {
+  return DATA.models.filter(m => selected.has(m.key)).map(m => m.key);
+}
+// Returns display labels of selected models (used for data lookup in DATA.overall etc.)
 function getSelectedLabels() {
-  return DATA.models.filter(m => selected.has(m.label)).map(m => m.label);
+  return DATA.models.filter(m => selected.has(m.key)).map(m => m.label);
 }
 function getSelectedBenchmarks() {
   return DATA.benchmarks.filter(b => selectedBench.has(b));
@@ -486,12 +491,14 @@ function buildModelPanel() {
       </span>
     </div>`;
     models.forEach(m => {
+      // Use m.key as checkbox id — unique, no special chars, matches selected Set
+      const safeId = 'cb-' + m.key.replace(/[^a-zA-Z0-9_-]/g, '_');
       const cls = m.isBase ? 'model-item is-base' : 'model-item';
       html += `<div class="${cls}" style="--mc:${m.color}">
-        <input type="checkbox" id="cb-${m.label}" checked
-               onchange="onModelToggle('${m.label}', this.checked)">
+        <input type="checkbox" id="${safeId}" checked
+               onchange="onModelToggle('${m.key}', this.checked)">
         <span class="dot" style="background:${m.color}"></span>
-        <label for="cb-${m.label}" title="${m.key}">${m.label}</label>
+        <label for="${safeId}" title="${m.key}">${m.label}</label>
       </div>`;
     });
   }
@@ -500,15 +507,17 @@ function buildModelPanel() {
 
 window.toggleGroup = function(group, on) {
   DATA.models.filter(m => m.group === group).forEach(m => {
-    const cb = document.getElementById('cb-' + m.label);
+    const safeId = 'cb-' + m.key.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cb = document.getElementById(safeId);
     if (cb) { cb.checked = on; }
-    if (on) selected.add(m.label); else selected.delete(m.label);
+    if (on) selected.add(m.key); else selected.delete(m.key);
   });
   updateCharts();
 };
 
-window.onModelToggle = function(label, checked) {
-  if (checked) selected.add(label); else selected.delete(label);
+// key = model directory key (not label)
+window.onModelToggle = function(key, checked) {
+  if (checked) selected.add(key); else selected.delete(key);
   updateCharts();
 };
 
@@ -774,7 +783,7 @@ function renderRadar_(chartId, groupFilter) {
 
   // Filter to relevant models (base + matching group)
   const relevant = DATA.models.filter(m =>
-    (m.isBase || m.group === groupFilter) && selected.has(m.label)
+    (m.isBase || m.group === groupFilter) && selected.has(m.key)
   );
   if (relevant.length < 2 || !benchmarks.length) {
     chart.clear();
@@ -858,7 +867,7 @@ function renderDeltaBar() {
   const baseData = DATA.overall[DATA.baseLabel] || {};
 
   // Only non-base selected models
-  const models = DATA.models.filter(m => !m.isBase && selected.has(m.label));
+  const models = DATA.models.filter(m => !m.isBase && selected.has(m.key));
   if (!models.length || !benchmarks.length) {
     chart.clear();
     chart.setOption({ title: { text: 'Select ablation models to compare', left: 'center',

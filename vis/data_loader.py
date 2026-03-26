@@ -32,28 +32,61 @@ class ResultLoader:
         self._extra_models = self._discover_extra_models()
 
     def _discover_extra_models(self):
-        """Scan work_dir for model directories not registered in MODEL_INFO."""
+        """Scan work_dir for model directories not registered in MODEL_INFO.
+
+        A directory is treated as a model dir only if it contains at least one
+        known result file pattern (e.g. *_acc.csv, *_rating.json, *_score.json).
+        This prevents dataset output dirs, source-code dirs, etc. from appearing.
+        """
         if not os.path.isdir(self.work_dir):
             return {}
-        known = set(MODEL_INFO.keys())
-        # Directories directly under work_dir that look like model dirs
+        known_keys = set(MODEL_INFO.keys())
+        known_datasets = set(DATASET_NAMES)
+
+        # Patterns that indicate a directory is a model result dir
+        _RESULT_PATTERNS = ('*_acc.csv', '*_rating.json', '*_score.json', '*_acc.xlsx')
+
         extra = {}
         try:
             entries = sorted(os.listdir(self.work_dir))
         except OSError:
             return {}
+
+        # Build a set of used labels to ensure uniqueness
+        used_labels = {v[0] for v in MODEL_INFO.values()}
         color_idx = len(MODEL_INFO)
+
         for entry in entries:
-            if entry in known:
+            if entry in known_keys or entry in known_datasets:
+                continue
+            if entry.startswith('.') or entry.startswith('_'):
                 continue
             full = os.path.join(self.work_dir, entry)
             if not os.path.isdir(full):
                 continue
-            # Skip hidden dirs and dataset-named dirs
-            if entry.startswith('.'):
+
+            # Must contain at least one result file at top level or in T*_G*/ subdirs
+            has_result = False
+            for pat in _RESULT_PATTERNS:
+                if glob.glob(os.path.join(full, pat)):
+                    has_result = True
+                    break
+                if glob.glob(os.path.join(full, 'T*_G*', pat)):
+                    has_result = True
+                    break
+            if not has_result:
                 continue
-            # Use shortened label: last segment after last '_' if very long
-            label = entry if len(entry) <= 20 else entry[:10] + '…' + entry[-8:]
+
+            # Build a unique, readable label from the directory name
+            label = entry
+            # If label is already taken, append a counter suffix
+            if label in used_labels:
+                i = 2
+                while f'{label}_{i}' in used_labels:
+                    i += 1
+                label = f'{label}_{i}'
+            used_labels.add(label)
+
             color = _AUTO_COLORS[color_idx % len(_AUTO_COLORS)]
             color_idx += 1
             extra[entry] = (label, 'extra', color)
