@@ -272,12 +272,13 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                 )
             self.llm = LLM(
                 model=self.model_path,
-                max_num_seqs=5,
+                max_num_seqs=int(os.environ.get('VLLM_MAX_NUM_SEQS', '5')),
                 max_model_len=32768,
-                limit_mm_per_prompt={"image": self.limit_mm_per_prompt},
+                limit_mm_per_prompt={"image": self.limit_mm_per_prompt, "video": self.limit_mm_per_prompt},
                 tensor_parallel_size=tp_size,
-                gpu_memory_utilization=kwargs.get("gpu_utils", 0.7),
-                enforce_eager=True,  # [新增] 必须加上这一行！
+                gpu_memory_utilization=kwargs.get(
+                    "gpu_utils", float(os.environ.get('VLLM_GPU_MEMORY_UTILIZATION', 0.85))),
+                enforce_eager=True,
                 trust_remote_code=True,
             )
 
@@ -544,71 +545,42 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         if self.verbose:
             print(f'\033[31m{messages}\033[0m')
 
-        # [修改] 这里的 apply_chat_template 会计算动态 token 数量
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-        # [关键修改] 获取 video_kwargs (包含 grid_thw)
         if listinstr(['omni'], self.model_path.lower()):
             audios, images, videos = process_mm_info(messages, use_audio_in_video=self.use_audio_in_video)
-            video_kwargs = None  # Omni 处理逻辑可能不同，按原样或参考 Qwen3
+            video_kwargs = None
         else:
-            # 必须设置 return_video_kwargs=True
             images, videos, video_kwargs = process_vision_info(
                 messages,
                 return_video_kwargs=True
             )
-        # text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        # if listinstr(['omni'], self.model_path.lower()):
-        #     audios, images, videos = process_mm_info(messages, use_audio_in_video=self.use_audio_in_video)
-        # else:
-        #     images, videos = process_vision_info(messages)
         print('finishing process vision info in vllm.')
 
-        videos_nd = []
-        video_inputs = None
-        if DATASET_MODALITY(dataset) == 'VIDEO' and 'megabench' not in dataset.lower():
-            if videos and len(videos) == 1:
-                videos_nd = [videos[0].detach().cpu().numpy().transpose(0, 2, 3, 1)]
-                video_inputs = {
-                    "prompt": text,
-                    "multi_modal_data": {"video": videos_nd[0]},
-                    "mm_processor_kwargs": video_kwargs if video_kwargs is not None else {}
-                }
-                if self.use_audio_in_video:
-                    import vllm
-                    assert not vllm.envs.VLLM_USE_V1, ("V1 does not support use_audio_in_video. Please launch this example with `VLLM_USE_V1=0`.")  # noqa: E501
-                    video_inputs["multi_modal_data"]["audio"] = audios[0]
-                    video_inputs['mm_processor_kwargs']['use_audio_in_video'] = True
-                if videos_nd[0].shape[0] > VLLM_MAX_IMAGE_INPUT_NUM:
-                    print('video input sequence may be too long for vllm, Maybe cannot generate response for VLLM')
-            else:
-                logging.warning(f"Expected 1 video but got {len(videos) if videos else 0}, falling back to text-only.")
+        mm_data = {}
+        if images:
+            mm_data['image'] = images
+        if videos:
+            mm_data['video'] = videos
+        if listinstr(['omni'], self.model_path.lower()) and self.use_audio_in_video and 'audios' in dir():
+            mm_data['audio'] = audios
+
+        req = {'prompt': text}
+        if mm_data:
+            req['multi_modal_data'] = mm_data
+        if listinstr(['omni'], self.model_path.lower()) and self.use_audio_in_video:
+            req['mm_processor_kwargs'] = {"use_audio_in_video": True}
+        elif video_kwargs is not None:
+            req['mm_processor_kwargs'] = video_kwargs
+
         sampling_params = SamplingParams(
             temperature=0.0, max_tokens=self.max_new_tokens, stop_token_ids=None
         )
-        if images:
-            outputs = self.llm.generate(
-                {
-                    "prompt": text,
-                    "multi_modal_data": {"image": images},
-                },
-                sampling_params=sampling_params,
-                use_tqdm=False,
-            )
-        elif video_inputs is not None:
-            outputs = self.llm.generate(
-                video_inputs,
-                sampling_params=sampling_params,
-                use_tqdm=False,
-            )
-        else:
-            outputs = self.llm.generate(
-                {
-                    "prompt": text,
-                },
-                sampling_params=sampling_params,
-                use_tqdm=False,
-            )
+        outputs = self.llm.generate(
+            req,
+            sampling_params=sampling_params,
+            use_tqdm=False,
+        )
 
         for o in outputs:
             generated_text = o.outputs[0].text
