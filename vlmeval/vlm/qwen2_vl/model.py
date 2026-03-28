@@ -324,10 +324,9 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                     'type': 'video',
                     'video': ensure_video_url(s['value'])
                 }
-                if self.min_pixels is not None:
-                    item['min_pixels'] = self.min_pixels
-                if self.max_pixels is not None:
-                    item['max_pixels'] = self.max_pixels
+                # Don't set min/max_pixels for video — let qwen_vl_utils auto-calculate
+                # per-frame resolution based on total frames and sequence length.
+                # The config max_pixels (e.g. 16384*28*28) is for images only.
                 if self.total_pixels is not None:
                     item['total_pixels'] = self.total_pixels
                 if self.fps is not None:
@@ -413,10 +412,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                         'type': 'video',
                         'video': ensure_video_url(s['value'])
                     }
-                    if self.min_pixels is not None:
-                        item['min_pixels'] = self.min_pixels
-                    if self.max_pixels is not None:
-                        item['max_pixels'] = self.max_pixels
+                    # Don't set min/max_pixels for video — see _prepare_content
                     if self.total_pixels is not None:
                         item['total_pixels'] = self.total_pixels
                     if self.fps is not None:
