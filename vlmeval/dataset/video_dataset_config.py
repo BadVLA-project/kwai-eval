@@ -240,6 +240,30 @@ charades_sta_dataset = {
     'CharadesSTA_2fps': partial(CharadesSTA, dataset='CharadesSTA', fps=2.0),
 }
 
+etbench_dataset = {
+    # ── Official setting (matches infer_etbench.py: load_video fps=1 on videos_compressed) ──
+    'ETBench_1fps':    partial(ETBench, dataset='ETBench', fps=1.0),      # <── official
+    # Full benchmark — alternative frame-count variants
+    'ETBench_16frame': partial(ETBench, dataset='ETBench', nframe=16, fps=-1),
+    'ETBench_32frame': partial(ETBench, dataset='ETBench', nframe=32, fps=-1),
+    'ETBench_64frame': partial(ETBench, dataset='ETBench', nframe=64, fps=-1),
+    'ETBench_2fps':    partial(ETBench, dataset='ETBench', fps=2.0),
+    # 470-sample commercial subset (Table 1 of the paper)
+    'ETBench_subset_1fps':    partial(ETBench, dataset='ETBench_subset', fps=1.0),   # <── official
+    'ETBench_subset_16frame': partial(ETBench, dataset='ETBench_subset', nframe=16, fps=-1),
+    'ETBench_subset_32frame': partial(ETBench, dataset='ETBench_subset', nframe=32, fps=-1),
+    # TVG-only slice (quick temporal grounding ablation)
+    'ETBench_TVG_1fps':    partial(ETBench, dataset='ETBench', fps=1.0,  task_filter=['tvg']),
+    'ETBench_TVG_32frame': partial(ETBench, dataset='ETBench', nframe=32, fps=-1, task_filter=['tvg']),
+    'ETBench_TVG_64frame': partial(ETBench, dataset='ETBench', nframe=64, fps=-1, task_filter=['tvg']),
+    # MCQ-only slice
+    'ETBench_MCQ_1fps':    partial(ETBench, dataset='ETBench', fps=1.0,
+                                   task_filter=['rar', 'eca', 'rvq', 'gvq']),
+    'ETBench_MCQ_32frame': partial(ETBench, dataset='ETBench', nframe=32, fps=-1,
+                                   task_filter=['rar', 'eca', 'rvq', 'gvq']),
+}
+
+
 charades_timelens_dataset = {
     'CharadesTimeLens_8frame': partial(CharadesTimeLens, dataset='CharadesTimeLens', nframe=8),
     'CharadesTimeLens_16frame': partial(CharadesTimeLens, dataset='CharadesTimeLens', nframe=16),
@@ -267,6 +291,7 @@ dataset_groups = [
     cg_av_counting_dataset, video_mmlu_dataset, egoexobench_dataset, dream_1k_dataset, video_tt_dataset,
     vsibench_dataset, aotbench_dataset, futureomni_dataset,
     charades_sta_dataset, charades_timelens_dataset, perceptiontest_dataset,
+    etbench_dataset,
 ]
 
 for grp in dataset_groups:

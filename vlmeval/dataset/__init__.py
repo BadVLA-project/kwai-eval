@@ -69,6 +69,7 @@ from .worldsense import WorldSense
 from .aotbench import AoTBench
 from .futureomni import FutureOmni
 from .charades_sta import CharadesSTA, CharadesTimeLens
+from .etbench import ETBench
 from .perceptiontest import PerceptionTest
 from .qbench_video import QBench_Video, QBench_Video_MCQ, QBench_Video_VQA
 
