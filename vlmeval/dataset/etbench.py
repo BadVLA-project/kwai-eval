@@ -232,7 +232,7 @@ class ETBench(VideoBaseDataset):
                     continue
                 print(f'ETBench: extracting {archive} → {videos_dir} ...')
                 try:
-                    with tarfile.open(archive, 'r:gz') as tf:
+                    with tarfile.open(archive, 'r:*') as tf:
                         tf.extractall(videos_dir)
                     print(f'ETBench: done extracting {osp.basename(archive)}')
                 except Exception as exc:
