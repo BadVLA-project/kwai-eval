@@ -1,3 +1,4 @@
+import os
 import re
 import os.path as osp
 from huggingface_hub import snapshot_download
@@ -5,6 +6,10 @@ from ..smp import *
 from .video_base import VideoBaseDataset
 
 FAIL_MSG = 'Failed to obtain answer via API.'
+
+# Sentinel item: when present in the message list, the model should NOT
+# append its own post_prompt — the dataset already manages format instructions.
+_MANAGED_PROMPT_SENTINEL = {'type': '_managed_prompt'}
 
 PRE_PROMPT = (
     'Please find the visual event described by a sentence in the video, '
@@ -15,6 +20,24 @@ PRE_PROMPT = (
 )
 
 POST_PROMPT = 'Please return its start time and end time in seconds.'
+
+# CoT-aware format suffix for temporal grounding
+_GROUNDING_COT_SUFFIX = {
+    'direct':    '',   # PRE_PROMPT + POST_PROMPT already sufficient
+    'cot_boxed': ('\nPlease reason step by step, then put your final answer '
+                  '(start time - end time in seconds) in \\boxed{} format.'),
+    'cot_tags':  ('\nPlease think step by step inside <think> tags, '
+                  'then provide the start and end times inside <answer> tags.'),
+}
+
+
+def _get_cot_mode():
+    env = os.environ.get('USE_COT', '0')
+    if env in ('0', ''):
+        return 'direct'
+    if env == 'tags':
+        return 'cot_tags'
+    return 'cot_boxed'
 
 
 def _compute_iou(pred_start, pred_end, gt_start, gt_end):
@@ -157,7 +180,9 @@ class CharadesSTA(VideoBaseDataset):
                 message.append(dict(type='image', value=frame))
 
         text = f"{PRE_PROMPT}{line['question']}. {POST_PROMPT}"
+        text += _GROUNDING_COT_SUFFIX[_get_cot_mode()]
         message.append(dict(type='text', value=text))
+        message.append(_MANAGED_PROMPT_SENTINEL)
         return message
 
     # ------------------------------------------------------------------
@@ -337,7 +362,9 @@ class CharadesTimeLens(CharadesSTA):
                 message.append(dict(type='image', value=frame))
 
         text = f"{PRE_PROMPT}{line['question']}. {POST_PROMPT}"
+        text += _GROUNDING_COT_SUFFIX[_get_cot_mode()]
         message.append(dict(type='text', value=text))
+        message.append(_MANAGED_PROMPT_SENTINEL)
         return message
 
     @classmethod

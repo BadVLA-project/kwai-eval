@@ -30,6 +30,7 @@ Annotation format (etbench_txt_v1.0.json) — list of dicts:
 
 import ast
 import json
+import os
 import re
 import os.path as osp
 
@@ -45,9 +46,73 @@ _GROUNDING_TASKS = {'tvg', 'evs', 'rvs', 'evl'}
 _MCQ_TASKS = {'rar', 'eca', 'rvq', 'gvq'}
 # Dense captioning tasks (predict multiple spans with captions)
 _CAPTIONING_TASKS = {'dvc', 'slc'}
+# All other tasks (ec, tas...)
+_OTHER_TASKS = {'ec', 'tas'}
 
 # Server-side data root (preferred); fallback: LMUDataRoot() / ETBench
 _SERVER_ROOT = '/m2v_intern/xuboshen/zgw/Benchmarks/ETBench'
+
+# Sentinel item: when present in the message list, the model should NOT
+# append its own post_prompt — the dataset already manages format instructions.
+_MANAGED_PROMPT_SENTINEL = {'type': '_managed_prompt'}
+
+
+def _get_cot_mode():
+    """Read USE_COT env var and return one of 'direct', 'cot_boxed', 'cot_tags'."""
+    env = os.environ.get('USE_COT', '0')
+    if env in ('0', ''):
+        return 'direct'
+    if env == 'tags':
+        return 'cot_tags'
+    return 'cot_boxed'
+
+
+# ---------------------------------------------------------------------------
+# Per-task format instructions
+# ---------------------------------------------------------------------------
+# Each maps cot_mode → suffix string appended after the ETBench question.
+
+_MCQ_FORMAT = {
+    'direct':    '\nAnswer with the option letter only.',
+    'cot_boxed': '\nPlease put your final answer in \\boxed{} format.',
+    'cot_tags':  ('\nPlease think step by step inside <think> tags, '
+                  'then provide the final answer inside <answer> tags.'),
+}
+
+_GROUNDING_FORMAT = {
+    'direct':    '',   # ETBench q already contains format instructions
+    'cot_boxed': ('\nPlease reason step by step, then put your final answer '
+                  '(start time - end time in seconds) in \\boxed{} format.'),
+    'cot_tags':  ('\nPlease think step by step inside <think> tags, '
+                  'then provide the start and end times inside <answer> tags.'),
+}
+
+_CAPTIONING_FORMAT = {
+    'direct':    '',   # ETBench q already contains instructions
+    'cot_boxed': ('\nPlease reason step by step, then put your final answer '
+                  'in \\boxed{} format.'),
+    'cot_tags':  ('\nPlease think step by step inside <think> tags, '
+                  'then provide the final answer inside <answer> tags.'),
+}
+
+_GENERIC_FORMAT = {
+    'direct':    '',
+    'cot_boxed': '\nPlease put your final answer in \\boxed{} format.',
+    'cot_tags':  ('\nPlease think step by step inside <think> tags, '
+                  'then provide the final answer inside <answer> tags.'),
+}
+
+
+def _format_suffix_for_task(task_code):
+    """Return the format instruction suffix for a given task code and current COT mode."""
+    mode = _get_cot_mode()
+    if task_code in _MCQ_TASKS:
+        return _MCQ_FORMAT[mode]
+    if task_code in _GROUNDING_TASKS:
+        return _GROUNDING_FORMAT[mode]
+    if task_code in _CAPTIONING_TASKS:
+        return _CAPTIONING_FORMAT[mode]
+    return _GENERIC_FORMAT[mode]
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +492,15 @@ class ETBench(VideoBaseDataset):
             for frame in frames:
                 message.append(dict(type='image', value=frame))
 
-        message.append(dict(type='text', value=str(line['question'])))
+        # Build prompt text with task-appropriate format instruction
+        task_code = str(line.get('task', '')).lower() if 'task' in line else ''
+        question_text = str(line['question'])
+        suffix = _format_suffix_for_task(task_code) if task_code else ''
+        prompt = question_text + suffix
+
+        message.append(dict(type='text', value=prompt))
+        # Tell the model not to append its own post_prompt
+        message.append(_MANAGED_PROMPT_SENTINEL)
         return message
 
     # ------------------------------------------------------------------

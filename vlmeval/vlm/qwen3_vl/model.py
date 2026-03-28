@@ -367,7 +367,12 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
 
     def _prepare_content(self, inputs: list[dict[str, str]], dataset: str | None = None) -> list[dict[str, str]]:
         content = []
+        managed_prompt = False
         for s in inputs:
+            # Sentinel: dataset controls format instructions, skip model post_prompt
+            if s.get('type') == '_managed_prompt':
+                managed_prompt = True
+                continue
             if s['type'] == 'image':
                 item = {'type': 'image', 'image': ensure_image_url(s['value'])}
                 if dataset == 'OCRBench':
@@ -426,6 +431,12 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             else:
                 raise ValueError(f"Invalid message type: {s['type']}, {s}")
             content.append(item)
+
+        # If the dataset embedded a '_managed_prompt' sentinel, it already
+        # contains the correct format instructions — skip model-level rewriting.
+        if managed_prompt:
+            return content
+
         if self.post_prompt:
             content = self._rewrite_prompt_for_cot(content)
         return content

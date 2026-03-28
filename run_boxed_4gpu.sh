@@ -75,6 +75,7 @@ export VIDEO_HOLMES_DIR="${VIDEO_HOLMES_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks
 export TIMELENS_DIR="${TIMELENS_DIR:-/m2v_intern/xuboshen/zgw/hf_cache_temp/TimeLens-Bench}"
 export PERCEPTION_TEST_DIR="${PERCEPTION_TEST_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/PerceptionTest}"
 export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
+export ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
 
 # ---------------------------------------------------------------------------
 # Datasets & Model
@@ -91,6 +92,7 @@ DATASETS=(
   MVBench_MP4_1fps
   PerceptionTest_val_16frame
   Video-MME_64frame
+  ETBench_1fps
 )
 
 MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"
