@@ -3,15 +3,14 @@
 Paper: https://arxiv.org/abs/2409.18111
 HuggingFace: https://huggingface.co/datasets/PolyU-ChenLab/ETBench
 
-12 tasks across 4 capabilities:
-  Referring:   tvg (Temporal Video Grounding), evs (Event-level Visual Search),
-               tem (Temporal Event Matching / Referring Video Summarization)
-  Grounding:   dvc (Dense Video Captioning), slc (Sequential Location Caption)
-  Dense Cap.:  epm (Event Point Marking / Event Counting)
-  Complex:     rar (Referring Action Recognition), eca (Event Caption Assessment),
-               rvq (Referring Video QA), gvq (Grounded Video QA),
-               tal (Temporal Action Localization / Segmentation),
-               vhd (Video Highlight Detection / Event-level Localization)
+12 tasks across 4 capabilities (paper columns):
+  REF:  rar (Referring Action Recognition), eca (Event Caption Assessment),
+        rvq (Referring Video QA)
+  GND:  tvg (Temporal Video Grounding), epm (Event Point Marking),
+        tal (Temporal Action Localization), evs (Event-level Visual Search),
+        vhd (Video Highlight Detection)
+  CAP:  dvc (Dense Video Captioning), slc (Sequential Location Caption)
+  COM:  tem (Temporal Event Matching), gvq (Grounded Video QA)
 
 Annotation format (etbench_txt_v1.0.json) — list of dicts:
   {
@@ -27,28 +26,41 @@ Annotation format (etbench_txt_v1.0.json) — list of dicts:
     "g":        list[str],    # (optional) GT captions for captioning tasks
     "q":        str,          # full prompt to send to model
   }
+
+Evaluation methodology mirrors the official compute_metrics.py (Ye Liu 2024).
 """
 
 import ast
+import copy
 import json
 import os
+import random
 import re
+import string
 import os.path as osp
+
+import numpy as np
 
 from ..smp import *
 from .video_base import VideoBaseDataset
 
 # ---------------------------------------------------------------------------
-# Task categorisation (codes match annotation etbench_txt_v1.0.json)
+# Task categorisation — codes match annotation etbench_txt_v1.0.json
+# Paper groupings:
+#   REF (Referring):  rar, eca, rvq
+#   GND (Grounding):  tvg, epm, tal, evs, vhd
+#   CAP (Captioning): dvc, slc
+#   COM (Complex):    tem, gvq
 # ---------------------------------------------------------------------------
-# Tasks that need temporal grounding evaluation (predict start-end spans)
-_GROUNDING_TASKS = {'tvg', 'evs', 'tem', 'vhd'}
-# Multiple-choice tasks (predict a letter option)
-_MCQ_TASKS = {'rar', 'eca', 'rvq', 'gvq'}
-# Dense captioning tasks (predict multiple spans with captions)
+_REF_TASKS        = {'rar', 'eca', 'rvq'}
+_GND_TASKS        = {'tvg', 'epm', 'tal', 'evs', 'vhd'}
 _CAPTIONING_TASKS = {'dvc', 'slc'}
-# All other tasks (epm, tal...)
-_OTHER_TASKS = {'epm', 'tal'}
+_COM_TASKS        = {'tem', 'gvq'}
+
+# Legacy aliases kept for format-suffix lookup
+_MCQ_TASKS       = _REF_TASKS          # all REF tasks are MCQ
+_GROUNDING_TASKS = _GND_TASKS | _COM_TASKS   # broad set for span parsing
+_OTHER_TASKS     = set()               # nothing falls through anymore
 
 # Server-side data root (preferred); fallback: LMUDataRoot() / ETBench
 _SERVER_ROOT = '/m2v_intern/xuboshen/zgw/Benchmarks/ETBench'
@@ -233,6 +245,594 @@ def _parse_option_letter(text):
     if m:
         return m.group(1).upper()
     return None
+
+
+# ---------------------------------------------------------------------------
+# Official per-task evaluators (ported from ETBench compute_metrics.py)
+# ---------------------------------------------------------------------------
+
+def _remove_nonascii(text):
+    return ''.join([c if ord(c) < 128 else ' ' for c in text])
+
+
+def _random_string(n=15):
+    return ''.join(random.choice(string.ascii_lowercase) for _ in range(n))
+
+
+def _iou_interval(a, b):
+    """Segment IoU for two [s, e] pairs (handles the DVC overlap definition)."""
+    s_i, e_i = a[0], a[1]
+    s, e = b[0], b[1]
+    intersection = max(0, min(e, e_i) - max(s, s_i))
+    union = min(max(e, e_i) - min(s, s_i), (e - s) + (e_i - s_i))
+    return float(intersection) / (union + 1e-8)
+
+
+def _tvg_eval(samples):
+    """tvg / epm — predict a single [s, e] span; eval with mIoU + R@[.1,.3,.5,.7]."""
+    iou_thr = [0.1, 0.3, 0.5, 0.7]
+    hit = [0] * len(iou_thr)
+    cnt, sum_iou = 0, 0
+    for sample in samples:
+        gt = sample['tgt']
+        pred_spans = _parse_spans(sample['pred'])
+        if not pred_spans:
+            cnt += 1
+            continue
+        # Use best-matching span as in tvg_format output
+        ps, pe = pred_spans[0]
+        gt_arr = np.array([gt], dtype=float)
+        pred_arr = np.array([[ps, pe]], dtype=float)
+        iou = float(_np_temporal_iou(gt_arr, pred_arr))
+        sum_iou += iou
+        for i, thr in enumerate(iou_thr):
+            if iou >= thr:
+                hit[i] += 1
+    recall = [h / len(samples) for h in hit]
+    miou = sum_iou / len(samples)
+    out = dict(Total=len(samples), Failed=cnt, mIoU=round(miou, 5))
+    for rec, thr in zip(recall, iou_thr):
+        out[f'F1@{thr}'] = round(rec, 5)
+    out['F1'] = round(sum(recall) / len(recall), 5)
+    return out
+
+
+def _vhd_eval(samples):
+    """vhd — predict a single timestamp; check if it falls in any GT highlight window."""
+    hit, cnt = 0, 0
+    for sample in samples:
+        gt = sample['tgt']
+        if not isinstance(gt[0][0], (list, tuple)):
+            gt = [gt]
+        match = re.search(r'[-+]?\d*\.?\d+', sample['pred'])
+        if not match:
+            cnt += 1
+            continue
+        pred = float(match.group(0))
+        matched = any(pred >= g[0] and pred <= g[1] for annotator in gt for g in annotator)
+        if matched:
+            hit += 1
+    out = dict(Total=len(samples), Failed=cnt)
+    out['F1'] = round(hit / len(samples), 5)
+    return out
+
+
+def _tem_eval(samples):
+    """tem — predict a single span; eval against multiple GT spans with max-IoU."""
+    iou_thr = [0.1, 0.3, 0.5, 0.7]
+    hit = [0] * len(iou_thr)
+    cnt, sum_iou = 0, 0
+    for sample in samples:
+        gt = sample['tgt']
+        pred_spans = _parse_spans(sample['pred'])
+        if not pred_spans:
+            cnt += 1
+            continue
+        ps, pe = pred_spans[0]
+        gt_arr = np.array(gt, dtype=float)
+        pred_arr = np.array([[ps, pe]], dtype=float)
+        iou = float(_np_temporal_iou(gt_arr, pred_arr).max())
+        sum_iou += iou
+        for i, thr in enumerate(iou_thr):
+            if iou >= thr:
+                hit[i] += 1
+    recall = [h / len(samples) for h in hit]
+    miou = sum_iou / len(samples)
+    out = dict(Total=len(samples), Failed=cnt, mIoU=round(miou, 5))
+    for rec, thr in zip(recall, iou_thr):
+        out[f'R@{thr}'] = round(rec, 5)
+    out['mRec'] = round(sum(recall) / len(recall), 5)
+    return out
+
+
+def _tal_eval(samples):
+    """tal — predict multiple spans; eval with F1@[.1,.3,.5,.7] (precision+recall)."""
+    iou_thr = [0.1, 0.3, 0.5, 0.7]
+    f1_score = [0.0] * len(iou_thr)
+    cnt = 0
+    for sample in samples:
+        gt = sample['tgt']
+        pred_spans = _parse_spans(sample['pred'])
+        if not pred_spans:
+            cnt += 1
+            continue
+        gt_arr = np.array(gt, dtype=float)
+        pred_arr = np.array(pred_spans, dtype=float)
+        iou = _np_temporal_iou(gt_arr, pred_arr)
+        for i, thr in enumerate(iou_thr):
+            if iou.max() < thr:
+                continue
+            rec = float((iou.max(axis=1) >= thr).mean())
+            prc = float((iou.max(axis=0) >= thr).mean())
+            f1_score[i] += 2 * prc * rec / (prc + rec)
+    f1_score = [f / len(samples) for f in f1_score]
+    out = dict(Total=len(samples), Failed=cnt)
+    for f1, thr in zip(f1_score, iou_thr):
+        out[f'F1@{thr}'] = round(f1, 5)
+    out['F1'] = round(sum(f1_score) / len(f1_score), 5)
+    return out
+
+
+def _evs_eval(samples):
+    """evs — predict multiple spans; frame-level F1 over 1000-frame dummy timeline."""
+    f1_scores = []
+    cnt = 0
+    for sample in samples:
+        gt = sample['tgt']
+        pred_spans = _parse_spans(sample['pred'])
+        if not pred_spans:
+            cnt += 1
+            continue
+        gt_map = np.zeros(1000)
+        for g in gt:
+            gt_map[max(0, round(g[0])):round(g[1])] = 1
+        pred_map = np.zeros(1000)
+        for p in pred_spans:
+            pred_map[max(0, round(p[0])):round(p[1])] = 2
+        com = gt_map + pred_map
+        tp = int((com == 3).sum())
+        fp = int((com == 2).sum())
+        fn = int((com == 1).sum())
+        if tp == 0:
+            f1_scores.append(0.0)
+        else:
+            rec = tp / (tp + fn)
+            prc = tp / (tp + fp)
+            f1_scores.append(2 * prc * rec / (prc + rec))
+    out = dict(Total=len(samples), Failed=cnt)
+    out['F1'] = round(sum(f1_scores) / len(f1_scores), 5) if f1_scores else 0.0
+    return out
+
+
+def _rvq_eval(samples, st):
+    """rar / eca / rvq — MCQ with SentSim fallback for unmatched predictions."""
+    if not samples:
+        return dict(Total=0, Failed=0, Acc=0.0)
+    n_opts = len(samples[0]['o'])
+    match_map = {chr(ord('a') + i): i for i in range(n_opts)}
+    _map = [chr(ord('A') + i) for i in range(n_opts)]
+    hit, cnt = 0, 0
+    for sample in samples:
+        gt = sample['p']
+        pred = sample['pred']
+        ever_matched = False
+        m = re.search(r'\(([A-Za-z])\)', pred)
+        if m:
+            ever_matched = True
+            ch = m.group(1).lower()
+            if ch in match_map and gt == match_map[ch]:
+                hit += 1
+                continue
+        pred_lower = pred.lower()
+        if pred_lower.startswith('best option:'):
+            pred_lower = pred_lower[12:]
+        pred_lower = pred_lower.lstrip().lstrip('(').lstrip()
+        if len(pred_lower) == 0:
+            cnt += 1
+            continue
+        if len(pred_lower) == 1 or pred_lower[1] in ('.', ',', ' ', ')'):
+            ever_matched = True
+            if pred_lower[0] in match_map and gt == match_map[pred_lower[0]]:
+                hit += 1
+                continue
+        # SentSim fallback
+        best_idx, best_score = 0, float('-inf')
+        for idx, option in enumerate(sample['o']):
+            if isinstance(option, (list, tuple)):
+                opt = f'{option[0]} - {option[1]}'
+            else:
+                opt = str(option)
+            opt = f'({_map[idx]}) {opt}'
+            score = st.compute_sim(pred, opt)
+            if score > best_score:
+                best_idx, best_score = idx, score
+        if not ever_matched:
+            cnt += 1
+        if gt == best_idx:
+            hit += 1
+    out = dict(Total=len(samples), Failed=cnt, Acc=round(hit / len(samples), 5))
+    return out
+
+
+def _gvq_eval(samples, st):
+    """gvq — MCQ accuracy first, then IoU recall only on correctly answered samples."""
+    if not samples:
+        return dict(Total=0, Failed=0, mIoU=0.0, mRec=0.0, Acc=0.0)
+    acc_hit_set, acc_cnt = set(), 0
+    _samples = copy.deepcopy(samples)
+    for sidx, sample in enumerate(_samples):
+        gt = sample['p']
+        pred = sample['pred']
+        if pred.lower().startswith('best option:'):
+            pred = pred[12:]
+        pred = pred.lstrip().lstrip('(').lstrip()
+        if not pred:
+            acc_cnt += 1
+            continue
+        n_opts = len(sample['o'])
+        match_map = {chr(ord('a') + i): i for i in range(n_opts)}
+        _map = [chr(ord('A') + i) for i in range(n_opts)]
+        if len(pred) == 1 or pred[1] in ('.', ',', ' ', ')'):
+            if pred[0].lower() in match_map:
+                if gt == match_map[pred[0].lower()]:
+                    acc_hit_set.add(sidx)
+                continue
+        best_idx, best_score = 0, float('-inf')
+        for idx, option in enumerate(sample['o']):
+            if isinstance(option, (list, tuple)):
+                opt = f'{option[0]} - {option[1]}'
+            else:
+                opt = str(option)
+            opt = f'({_map[idx]}) {opt}'
+            score = st.compute_sim(pred, opt)
+            if score > best_score:
+                best_idx, best_score = idx, score
+        if best_score == float('-inf'):
+            acc_cnt += 1
+            continue
+        if gt == best_idx:
+            acc_hit_set.add(sidx)
+    iou_thr = [0.1, 0.3, 0.5, 0.7]
+    hit = [0] * len(iou_thr)
+    rec_cnt, sum_iou = 0, 0
+    for sidx, sample in enumerate(samples):
+        if sidx not in acc_hit_set:
+            continue
+        gt = sample['tgt']
+        pred_spans = _parse_spans(sample['pred'])
+        if not pred_spans:
+            rec_cnt += 1
+            continue
+        ps, pe = pred_spans[0]
+        gt_arr = np.array([gt], dtype=float)
+        pred_arr = np.array([[ps, pe]], dtype=float)
+        iou = float(_np_temporal_iou(gt_arr, pred_arr))
+        sum_iou += iou
+        for i, thr in enumerate(iou_thr):
+            if iou >= thr:
+                hit[i] += 1
+    recall = [h / len(samples) for h in hit]
+    miou = sum_iou / len(samples)
+    out = dict(Total=len(samples), Failed=rec_cnt + acc_cnt, mIoU=round(miou, 5))
+    for rec, thr in zip(recall, iou_thr):
+        out[f'R@{thr}'] = round(rec, 5)
+    out['mRec'] = round(sum(recall) / len(recall), 5)
+    out['Acc'] = round(len(acc_hit_set) / len(samples), 5)
+    return out
+
+
+def _dvc_eval(samples, st):
+    """dvc / slc — Dense Video Captioning: F1@tIoU + NLP metrics via DVCEval."""
+    try:
+        from pycocoevalcap.bleu.bleu import Bleu
+        from pycocoevalcap.cider.cider import Cider
+        from pycocoevalcap.meteor.meteor import Meteor
+        from pycocoevalcap.rouge.rouge import Rouge
+        from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+        _has_coco = True
+    except ImportError:
+        _has_coco = False
+
+    iou_thr = [0.1, 0.3, 0.5, 0.7]
+    gt_dict, pred_dict = {}, {'results': {}}
+    cnt = 0
+    for sample in samples:
+        gt_spans = sample['tgt']
+        gt_caps = sample['g'] or []
+        # Parse predicted timestamps + captions
+        pred_spans, pred_caps = _dvc_format(sample['pred'])
+        if pred_spans is None or not pred_spans:
+            cnt += 1
+            continue
+        vid = sample['video']
+        gt_dict[vid] = dict(timestamps=gt_spans, sentences=gt_caps)
+        pred_dict['results'][vid] = [
+            dict(sentence=c, timestamp=t) for t, c in zip(pred_spans, pred_caps)
+        ]
+
+    scale = len(pred_dict['results']) / len(samples) if samples else 1.0
+
+    nlp_keys = ('Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr', 'SentSim')
+    if gt_dict and _has_coco:
+        from sentence_transformers.util import dot_score
+        import sentence_transformers
+
+        class _ST:
+            def __init__(self):
+                self.model = sentence_transformers.SentenceTransformer(
+                    'sentence-transformers/all-MiniLM-L6-v2'
+                )
+            def compute_sim(self, a, b):
+                a_e = self.model.encode([a])
+                b_e = self.model.encode([b])
+                return float(dot_score(a_e, b_e)[0, 0].cpu())
+            def compute_score(self, gts, res):
+                keys = list(gts.keys())
+                a = [gts[k][0] for k in keys]
+                b = [res[k][0] for k in keys]
+                a_e = self.model.encode(a)
+                b_e = self.model.encode(b)
+                sc = dot_score(a_e, b_e).cpu()
+                score = sum(sc[i, i].item() for i in range(sc.shape[0])) / sc.shape[0]
+                return float(score), None
+
+        _st_inst = _ST()
+        tokenizer = PTBTokenizer(verbose=False)
+        scorers = [
+            (Bleu(4), ['Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4']),
+            (Meteor(), 'METEOR'),
+            (Rouge(), 'ROUGE_L'),
+            (Cider(), 'CIDEr'),
+            (_st_inst, 'SentSim'),
+        ]
+        evaluator = _DVCEval(gt_dict, pred_dict, iou_thr, tokenizer, scorers)
+        evaluator.evaluate()
+        scores = evaluator.scores
+    else:
+        scores = {k: [0.0] * len(iou_thr) for k in ('Recall', 'Precision') + nlp_keys}
+        scores['Recall'] = [0.0] * len(iou_thr)
+        scores['Precision'] = [0.0] * len(iou_thr)
+
+    out = dict(Total=len(samples), Failed=cnt)
+    f1_list = []
+    for rec, prc, thr in zip(scores['Recall'], scores['Precision'], iou_thr):
+        rec = rec * scale
+        prc = prc * scale
+        f1 = 0.0 if prc + rec == 0 else 2 * prc * rec / (prc + rec)
+        out[f'F1@{thr}'] = round(f1, 5)
+        f1_list.append(f1)
+    out['F1'] = round(sum(f1_list) / len(f1_list), 5)
+    for k in ('Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr', 'SentSim'):
+        out[k] = round(sum(scores.get(k, [0.0])) / max(len(scores.get(k, [1])), 1), 5)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# DVCEval helper (ported from official ETBench)
+# ---------------------------------------------------------------------------
+
+class _DVCEval:
+    def __init__(self, ground_truth, prediction, tious, tokenizer, scorers):
+        self.tious = tious
+        self.max_proposals = 1000
+        self.ground_truths = [ground_truth]
+        self.prediction = {
+            vid: prediction['results'][vid][:self.max_proposals]
+            for vid in prediction['results']
+        }
+        self.tokenizer = tokenizer
+        self.scorers = scorers
+
+    def _gt_vid_ids(self):
+        ids = set()
+        for gt in self.ground_truths:
+            ids |= set(gt.keys())
+        return list(ids)
+
+    def _iou(self, a, b):
+        s_i, e_i = a[0], a[1]
+        s, e = b[0], b[1]
+        inter = max(0, min(e, e_i) - max(s, s_i))
+        union = min(max(e, e_i) - min(s, s_i), (e - s) + (e_i - s_i))
+        return float(inter) / (union + 1e-8)
+
+    def evaluate(self):
+        self.scores = {}
+        for tiou in self.tious:
+            for metric, score in self._eval_tiou(tiou).items():
+                self.scores.setdefault(metric, []).append(score)
+        self.scores['Recall'] = []
+        self.scores['Precision'] = []
+        for tiou in self.tious:
+            prc, rec = self._eval_detection(tiou)
+            self.scores['Recall'].append(rec)
+            self.scores['Precision'].append(prc)
+
+    def _eval_detection(self, tiou):
+        vid_ids = self._gt_vid_ids()
+        recall = [0.0] * len(vid_ids)
+        precision = [0.0] * len(vid_ids)
+        for vi, vid_id in enumerate(vid_ids):
+            best_rec, best_prc = 0.0, 0.0
+            for gt in self.ground_truths:
+                if vid_id not in gt:
+                    continue
+                refs = gt[vid_id]
+                ref_covered, pred_covered = set(), set()
+                if vid_id in self.prediction:
+                    for pi, pred in enumerate(self.prediction[vid_id]):
+                        for ri, ref_ts in enumerate(refs['timestamps']):
+                            if self._iou(pred['timestamp'], ref_ts) > tiou:
+                                ref_covered.add(ri)
+                                pred_covered.add(pi)
+                    new_prc = len(pred_covered) / (pi + 1)
+                    best_prc = max(best_prc, new_prc)
+                new_rec = len(ref_covered) / len(refs['timestamps'])
+                best_rec = max(best_rec, new_rec)
+            recall[vi] = best_rec
+            precision[vi] = best_prc
+        return sum(precision) / len(precision), sum(recall) / len(recall)
+
+    def _eval_tiou(self, tiou):
+        vid2capid, res, gts, cur_res, cur_gts = {}, {}, {}, {}, {}
+        uid = 0
+        for vid_id in self._gt_vid_ids():
+            vid2capid[vid_id] = []
+            if vid_id not in self.prediction:
+                continue
+            for pred in self.prediction[vid_id]:
+                added = False
+                for gt in self.ground_truths:
+                    if vid_id not in gt:
+                        continue
+                    gt_v = gt[vid_id]
+                    for cap_idx, cap_ts in enumerate(gt_v['timestamps']):
+                        if self._iou(pred['timestamp'], cap_ts) >= tiou:
+                            cur_res[uid] = [{'caption': _remove_nonascii(pred['sentence'])}]
+                            cur_gts[uid] = [{'caption': _remove_nonascii(gt_v['sentences'][cap_idx])}]
+                            vid2capid[vid_id].append(uid)
+                            uid += 1
+                            added = True
+                if not added:
+                    cur_res[uid] = [{'caption': _remove_nonascii(pred['sentence'])}]
+                    cur_gts[uid] = [{'caption': _random_string()}]
+                    vid2capid[vid_id].append(uid)
+                    uid += 1
+
+        tok_res = self.tokenizer.tokenize(cur_res)
+        tok_gts = self.tokenizer.tokenize(cur_gts)
+        for vid in vid2capid:
+            res[vid] = {i: tok_res[i] for i in vid2capid[vid]}
+            gts[vid] = {i: tok_gts[i] for i in vid2capid[vid]}
+
+        output = {}
+        for scorer, method in self.scorers:
+            all_scores = {}
+            for vid_id in self._gt_vid_ids():
+                if not res.get(vid_id) or not gts.get(vid_id):
+                    score = [0] * len(method) if isinstance(method, list) else 0
+                else:
+                    if isinstance(method, list):
+                        score, _ = scorer.compute_score(gts[vid_id], res[vid_id], verbose=0)
+                    else:
+                        score, _ = scorer.compute_score(gts[vid_id], res[vid_id])
+                all_scores[vid_id] = score
+            if isinstance(method, list):
+                scores_arr = np.mean(list(all_scores.values()), axis=0)
+                for mi, m in enumerate(method):
+                    output[m] = scores_arr[mi]
+            else:
+                output[method] = float(np.mean(list(all_scores.values())))
+        return output
+
+
+# ---------------------------------------------------------------------------
+# DVC format parser (ported from official ETBench)
+# ---------------------------------------------------------------------------
+
+def _extract_time_part(time_part):
+    radius = 20
+    result = re.compile(r'\d+\.*\d*\s*-\s*\d+\.*\d*').findall(time_part)
+    if not result:
+        if time_part.count(':') == 1:
+            t = re.compile(r'\d+\.*\d*:\d+\.*\d*').findall(time_part)
+            if t:
+                s = int(t[0].split(':')[0]) * 60 + int(t[0].split(':')[1])
+                result = [f'{max(0, s-radius)} - {s+radius}']
+        elif time_part.count(':') == 2:
+            ts = re.compile(r'\d+\.*\d*:\d+\.*\d*').findall(time_part)
+            if len(ts) == 2:
+                s = int(ts[0].split(':')[0]) * 60 + int(ts[0].split(':')[1])
+                e = int(ts[1].split(':')[0]) * 60 + int(ts[1].split(':')[1])
+                result = [f'{s} - {e}']
+    if not result:
+        nums = re.compile(r'\d+\.*\d*(?!\.)').findall(time_part)
+        if len(nums) == 1:
+            t = float(nums[0])
+            result = [f'{max(0, t-radius)} - {t+radius}']
+        elif len(nums) == 2:
+            result = [f'{nums[0]} - {nums[1]}']
+    return result
+
+
+def _extract_time_from_paragraph(paragraph):
+    paragraph = paragraph.lower()
+    timestamps, captions = [], []
+    for tp, sp in [(r'(\d+\.*\d*)\s*-\s*(\d+\.*\d*)', r'(\d+\.*\d*\s*-\s*\d+\.*\d*)')]:
+        time_m = re.findall(tp, paragraph)
+        str_m = re.findall(sp, paragraph)
+        if time_m:
+            timestamps = [[float(s), float(e)] for s, e in time_m]
+            rest = paragraph
+            for ts in str_m:
+                rest = rest.replace(ts, '\n')
+            captions = rest.replace('seconds', '').split('\n')
+        if timestamps:
+            break
+    if not timestamps:
+        s_pat = r'(?:start(?:ing)?\s+time:\s*(\d+\.*\d*)(?:s|\s+seconds)?)'
+        e_pat = r'(?:end(?:ing)?\s+time:\s*(\d+\.*\d*)(?:s|\s+seconds)?)'
+        sm = re.findall(s_pat, paragraph, re.IGNORECASE)
+        em = re.findall(e_pat, paragraph, re.IGNORECASE)
+        if sm and em:
+            timestamps = [[float(s), float(e)] for s, e in zip(sm, em)]
+            captions = re.findall(r'description:\s*(.*)', paragraph) or re.findall(r'\*\s*(.*)', paragraph)
+    if not timestamps:
+        se = re.findall(r'start time (\d+\.*\d*), end time (\d+\.*\d*)', paragraph)
+        if se:
+            timestamps = [[float(s), float(e)] for s, e in se]
+            captions = []
+    captions = [c.strip().strip(', ').rstrip() for c in captions if len(c) > 5]
+    n = min(len(timestamps), len(captions))
+    return timestamps[:n], captions[:n]
+
+
+def _dvc_format(caption):
+    """Parse model output into (timestamps, sentences) for DVC evaluation."""
+    timestamps, sents = [], []
+    try:
+        timestamps, sents = _extract_time_from_paragraph(caption)
+    except Exception:
+        return None, None
+
+    if not timestamps:
+        lines = caption.split('\n') if '\n' in caption else caption.split('.')
+        lines = [l for l in lines if len(l) > 7]
+        if '\n' not in caption:
+            lines = [l + '.' for l in lines]
+        for line in lines:
+            if timestamps:
+                break
+            try:
+                parts = line.split('seconds')
+                parts = [p.strip(',') for p in parts]
+                tp = _extract_time_part(parts[0])
+                if not tp:
+                    continue
+                stime = round(float(tp[0].split('-')[0].strip()), 2)
+                etime = round(float(tp[0].split('-')[1].strip()), 2)
+                timestamps.append([stime, etime])
+                sents.append(parts[-1].strip())
+            except Exception:
+                continue
+
+    if not timestamps:
+        return None, None
+
+    for i in range(len(timestamps)):
+        timestamps[i] = [min(timestamps[i]), max(timestamps[i])]
+    return timestamps, sents
+
+
+def _np_temporal_iou(gt, pred):
+    """Vectorised temporal IoU: gt [M,2], pred [N,2] → [M,N] matrix."""
+    inter_s = np.maximum(gt[:, 0:1], pred[:, 0])   # [M, N]
+    inter_e = np.minimum(gt[:, 1:2], pred[:, 1])
+    inter = np.maximum(0.0, inter_e - inter_s)
+    gt_len = gt[:, 1] - gt[:, 0]
+    pred_len = pred[:, 1] - pred[:, 0]
+    union = gt_len[:, None] + pred_len[None, :] - inter
+    return np.where(union > 0, inter / union, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -558,166 +1158,173 @@ class ETBench(VideoBaseDataset):
 
     @classmethod
     def evaluate(cls, eval_file, **judge_kwargs):
+        """Evaluate predictions against GT.
+
+        Mirrors the official ETBench compute_metrics.py methodology and
+        produces the same REF / GND / CAP / COM four-column summary used
+        in Table 1 of the paper.
+
+        Task → evaluator mapping:
+          tvg, epm        → _tvg_eval   (mIoU + F1@tIoU)        [GND]
+          vhd             → _vhd_eval   (point-in-window F1)     [GND]
+          tal             → _tal_eval   (set F1@tIoU)            [GND]
+          evs             → _evs_eval   (frame-level F1)         [GND]
+          tem             → _tem_eval   (max-IoU mRec)           [COM]
+          rar, eca, rvq   → _rvq_eval   (Acc + SentSim fallback) [REF]
+          gvq             → _gvq_eval   (mRec + Acc)             [COM]
+          dvc, slc        → _dvc_eval   (F1@tIoU + NLP metrics)  [CAP]
+        """
         data = load(eval_file)
-        score_file = get_intermediate_file_path(eval_file, '_etbench_score')
 
-        if not osp.exists(score_file):
-            records = []
-            for _, row in data.iterrows():
-                pred = str(row.get('prediction', '')).strip()
-                task = str(row.get('task', '')).lower()
+        # ---------- build per-sample dicts that the evaluators expect ----------
+        by_task = {}   # task → list[dict]
+        for _, row in data.iterrows():
+            task = str(row.get('task', '')).lower()
+            try:
+                gt = json.loads(str(row.get('answer', '{}')))
+            except (json.JSONDecodeError, TypeError):
+                gt = {}
 
+            # Normalise tgt nesting depth to [[s,e],...]
+            tgt = gt.get('tgt') or []
+            if tgt:
+                if isinstance(tgt[0], (int, float)):
+                    tgt = [tgt]
+                elif isinstance(tgt[0], list) and tgt[0] and isinstance(tgt[0][0], list):
+                    tgt = tgt[0]
+
+            sample = {
+                'pred':   str(row.get('prediction', '')).strip(),
+                'task':   task,
+                'source': row.get('source', ''),
+                'video':  str(row.get('video', '')),
+                'tgt':    tgt,
+                'p':      gt.get('p'),
+                'o':      gt.get('o') or [],
+                'g':      gt.get('g') or [],
+            }
+            by_task.setdefault(task, []).append(sample)
+
+        # ---------- lazy SentSim model (only loaded if REF/COM tasks exist) ----------
+        _st = None
+        def _get_st():
+            nonlocal _st
+            if _st is None:
                 try:
-                    gt_dict = json.loads(str(row.get('answer', '{}')))
-                except (json.JSONDecodeError, TypeError):
-                    gt_dict = {}
+                    import sentence_transformers
+                    from sentence_transformers.util import dot_score as _ds
 
-                rec = {
-                    'index':  row.get('index', _),
-                    'task':   task,
-                    'source': row.get('source', ''),
-                    'pred':   pred,
-                }
+                    class _STSimple:
+                        def __init__(self):
+                            self.model = sentence_transformers.SentenceTransformer(
+                                'sentence-transformers/all-MiniLM-L6-v2'
+                            )
+                        def compute_sim(self, a, b):
+                            ae = self.model.encode([a])
+                            be = self.model.encode([b])
+                            return float(_ds(ae, be)[0, 0].cpu())
 
-                # ---- Grounding tasks ----
-                if task in _GROUNDING_TASKS:
-                    gt_spans = gt_dict.get('tgt') or []
-                    # Normalise tgt to [[s,e],...] regardless of nesting depth
-                    if gt_spans:
-                        if isinstance(gt_spans[0], (int, float)):
-                            # Flat pair [s, e] → wrap
-                            gt_spans = [gt_spans]
-                        elif (isinstance(gt_spans[0], list) and gt_spans[0]
-                              and isinstance(gt_spans[0][0], list)):
-                            # Extra nesting [[[s,e],...]] → unwrap one layer
-                            gt_spans = gt_spans[0]
-                    ps, pe = _parse_span(pred)
-                    if ps is None:
-                        rec['iou'] = 0.0
-                        rec['parsed'] = False
-                    else:
-                        rec['iou'] = _best_iou_against_gt_spans(ps, pe, gt_spans)
-                        rec['parsed'] = True
+                    _st = _STSimple()
+                except ImportError:
+                    _st = None
+            return _st
 
-                # ---- MCQ tasks ----
-                elif task in _MCQ_TASKS:
-                    correct_idx = gt_dict.get('p')
-                    options = gt_dict.get('o') or []
-                    if correct_idx is not None and len(options) > 0:
-                        correct_letter = chr(ord('A') + int(correct_idx))
-                        pred_letter = _parse_option_letter(pred)
-                        rec['correct_letter'] = correct_letter
-                        rec['pred_letter'] = pred_letter
-                        rec['correct'] = (pred_letter == correct_letter) if pred_letter else False
-                    else:
-                        rec['correct'] = False
+        # ---------- run per-task evaluators ----------
+        collected = {}   # task → out_dict
 
-                # ---- Captioning tasks ----
-                elif task in _CAPTIONING_TASKS:
-                    gt_spans = gt_dict.get('tgt') or []
-                    if gt_spans and not isinstance(gt_spans[0], list):
-                        gt_spans = [gt_spans]
-                    pred_spans = _parse_spans(pred)
-                    # Compute F1 at IoU=0.5 between predicted and GT span sets
-                    rec['f1_iou5'] = _span_set_f1(pred_spans, gt_spans, iou_thresh=0.5)
-                    rec['gt_captions'] = json.dumps(gt_dict.get('g') or [])
-                    rec['pred_spans_count'] = len(pred_spans)
+        for task, samples in by_task.items():
+            if task in ('tvg', 'epm'):
+                collected[task] = _tvg_eval(samples)
+            elif task == 'vhd':
+                collected[task] = _vhd_eval(samples)
+            elif task == 'tem':
+                collected[task] = _tem_eval(samples)
+            elif task == 'tal':
+                collected[task] = _tal_eval(samples)
+            elif task == 'evs':
+                collected[task] = _evs_eval(samples)
+            elif task in ('rar', 'eca', 'rvq'):
+                collected[task] = _rvq_eval(samples, _get_st())
+            elif task == 'gvq':
+                collected[task] = _gvq_eval(samples, _get_st())
+            elif task in ('dvc', 'slc'):
+                collected[task] = _dvc_eval(samples, _get_st())
 
-                records.append(rec)
-
-            score_df = pd.DataFrame(records)
-            dump(score_df, score_file)
-        else:
-            score_df = load(score_file)
-
+        # ---------- aggregate into REF / GND / CAP / COM ----------
         results = {}
 
-        # ---- Aggregate grounding metrics ----
-        grd = score_df[score_df['task'].isin(_GROUNDING_TASKS)]
-        if len(grd) > 0:
-            ious = grd['iou'].fillna(0).values
-            results['Grounding/mIoU']   = round(float(ious.mean()) * 100, 2)
-            results['Grounding/R@0.3']  = round(float((ious >= 0.3).mean()) * 100, 2)
-            results['Grounding/R@0.5']  = round(float((ious >= 0.5).mean()) * 100, 2)
-            results['Grounding/R@0.7']  = round(float((ious >= 0.7).mean()) * 100, 2)
-            # Per-task breakdown
-            for task_code in _GROUNDING_TASKS:
-                sub = grd[grd['task'] == task_code]
-                if len(sub) == 0:
-                    continue
-                t_ious = sub['iou'].fillna(0).values
-                results[f'{task_code.upper()}/mIoU']  = round(float(t_ious.mean()) * 100, 2)
-                results[f'{task_code.upper()}/R@0.5'] = round(float((t_ious >= 0.5).mean()) * 100, 2)
+        # -- REF: mean Acc(rar, eca, rvq) --
+        ref_tasks = [t for t in ('rar', 'eca', 'rvq') if t in collected]
+        for t in ref_tasks:
+            results[f'{t.upper()}/Acc'] = round(collected[t]['Acc'] * 100, 2)
+        if ref_tasks:
+            results['REF/Acc'] = round(
+                sum(collected[t]['Acc'] for t in ref_tasks) / len(ref_tasks) * 100, 2)
 
-        # ---- Aggregate MCQ metrics ----
-        mcq = score_df[score_df['task'].isin(_MCQ_TASKS)]
-        if len(mcq) > 0:
-            acc = mcq['correct'].fillna(False).astype(bool).mean()
-            results['MCQ/Accuracy'] = round(float(acc) * 100, 2)
-            for task_code in _MCQ_TASKS:
-                sub = mcq[mcq['task'] == task_code]
-                if len(sub) == 0:
-                    continue
-                t_acc = sub['correct'].fillna(False).astype(bool).mean()
-                results[f'{task_code.upper()}/Accuracy'] = round(float(t_acc) * 100, 2)
+        # -- GND: mean F1(tvg, epm, tal, evs, vhd) --
+        gnd_tasks = [t for t in ('tvg', 'epm', 'tal', 'evs', 'vhd') if t in collected]
+        for t in gnd_tasks:
+            results[f'{t.upper()}/F1'] = round(collected[t].get('F1', 0) * 100, 2)
+        if gnd_tasks:
+            results['GND/F1'] = round(
+                sum(collected[t].get('F1', 0) for t in gnd_tasks) / len(gnd_tasks) * 100, 2)
 
-        # ---- Aggregate captioning metrics ----
-        cap = score_df[score_df['task'].isin(_CAPTIONING_TASKS)]
-        if len(cap) > 0:
-            f1 = cap['f1_iou5'].fillna(0).mean()
-            results['DenseCap/F1@IoU0.5'] = round(float(f1) * 100, 2)
-            for task_code in _CAPTIONING_TASKS:
-                sub = cap[cap['task'] == task_code]
-                if len(sub) == 0:
-                    continue
-                t_f1 = sub['f1_iou5'].fillna(0).mean()
-                results[f'{task_code.upper()}/F1@IoU0.5'] = round(float(t_f1) * 100, 2)
+        # -- CAP: per task F1 + NLP, then mean F1 and mean SentSim --
+        cap_tasks = [t for t in ('dvc', 'slc') if t in collected]
+        for t in cap_tasks:
+            d = collected[t]
+            results[f'{t.upper()}/F1'] = round(d.get('F1', 0) * 100, 2)
+            results[f'{t.upper()}/SentSim'] = round(d.get('SentSim', 0) * 100, 2)
+            for k in ('Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr'):
+                if k in d:
+                    results[f'{t.upper()}/{k}'] = round(d[k] * 100, 2)
+        if cap_tasks:
+            results['CAP/F1'] = round(
+                sum(collected[t].get('F1', 0) for t in cap_tasks) / len(cap_tasks) * 100, 2)
+            results['CAP/SentSim'] = round(
+                sum(collected[t].get('SentSim', 0) for t in cap_tasks) / len(cap_tasks) * 100, 2)
 
-        # ---- Save and print ----
+        # -- COM: tem mRec + gvq mRec → mean Rec --
+        com_tasks = [t for t in ('tem', 'gvq') if t in collected]
+        for t in com_tasks:
+            d = collected[t]
+            results[f'{t.upper()}/mRec'] = round(d.get('mRec', 0) * 100, 2)
+            if 'Acc' in d:
+                results[f'{t.upper()}/Acc'] = round(d['Acc'] * 100, 2)
+        if com_tasks:
+            results['COM/mRec'] = round(
+                sum(collected[t].get('mRec', 0) for t in com_tasks) / len(com_tasks) * 100, 2)
+
+        # -- AVG across four groups --
+        group_scores = []
+        if 'REF/Acc'    in results: group_scores.append(results['REF/Acc'])
+        if 'GND/F1'     in results: group_scores.append(results['GND/F1'])
+        if 'CAP/F1'     in results: group_scores.append(results['CAP/F1'])
+        if 'COM/mRec'   in results: group_scores.append(results['COM/mRec'])
+        if group_scores:
+            results['AVG'] = round(sum(group_scores) / len(group_scores), 2)
+
+        # ---------- print paper-style summary ----------
+        print('\nETBench Evaluation Results (official metric alignment):')
+        for k, v in results.items():
+            print(f'  {k}: {v:.2f}')
+
+        # Paper summary row
+        cols = ['REF/Acc', 'GND/F1', 'CAP/F1', 'COM/mRec', 'AVG']
+        row_vals = [results.get(c, '-') for c in cols]
+        header = ' | '.join(f'{c:>10}' for c in ['REF', 'GND', 'CAP', 'COM', 'AVG'])
+        values = ' | '.join(
+            f'{v:>10.1f}' if isinstance(v, float) else f'{v:>10}' for v in row_vals
+        )
+        print(f'\n  {"E.T. Bench":>10}')
+        print(f'  {header}')
+        print(f'  {values}')
+
+        # Save
         acc_file = get_intermediate_file_path(eval_file, '_etbench_acc')
         dump(
             pd.DataFrame([{'metric': k, 'value': v} for k, v in results.items()]),
             acc_file,
         )
-
-        print('\nETBench Evaluation Results:')
-        for k, v in results.items():
-            print(f'  {k}: {v:.2f}')
         return results
 
-
-# ---------------------------------------------------------------------------
-# Helper: span-set F1 at an IoU threshold
-# ---------------------------------------------------------------------------
-
-def _span_set_f1(pred_spans, gt_spans, iou_thresh=0.5):
-    """Compute F1 between a set of predicted spans and a set of GT spans.
-
-    Each predicted span is matched to at most one GT span (greedy by IoU).
-    Returns the F1 score in [0, 1].
-    """
-    if not gt_spans:
-        return 1.0 if not pred_spans else 0.0
-    if not pred_spans:
-        return 0.0
-
-    matched_gt = set()
-    tp = 0
-    for ps, pe in pred_spans:
-        best_iou, best_j = 0.0, -1
-        for j, (gs, ge) in enumerate(gt_spans):
-            if j in matched_gt:
-                continue
-            iou = _temporal_iou(ps, pe, gs, ge)
-            if iou > best_iou:
-                best_iou = iou
-                best_j = j
-        if best_iou >= iou_thresh and best_j >= 0:
-            tp += 1
-            matched_gt.add(best_j)
-
-    precision = tp / len(pred_spans) if pred_spans else 0.0
-    recall    = tp / len(gt_spans)   if gt_spans    else 0.0
-    if precision + recall == 0:
-        return 0.0
-    return 2 * precision * recall / (precision + recall)
