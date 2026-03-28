@@ -577,7 +577,10 @@ def _dvc_eval(samples, st):
                 return float(score), None
 
         _st_inst = _ST()
-        tokenizer = PTBTokenizer(verbose=False)
+        try:
+            tokenizer = PTBTokenizer(verbose=False)
+        except TypeError:
+            tokenizer = PTBTokenizer()
         scorers = [
             (Bleu(4), ['Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4']),
             (Meteor(), 'METEOR'),

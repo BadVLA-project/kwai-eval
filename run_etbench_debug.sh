@@ -61,8 +61,21 @@ WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_etbench_debu
 LOG_FILE="${WORK_DIR}/etbench_debug.log"
 mkdir -p "${WORK_DIR}"
 
-# Clean stale cache (default: on)
-CLEAN="${CLEAN:-1}"
+# Clean stale cache — "daily" mode: only clean if last run was on a different day
+CLEAN="${CLEAN:-daily}"
+_TODAY=$(date '+%Y%m%d')
+_STAMP_FILE="${WORK_DIR}/.etbench_last_eval_date"
+
+if [ "${CLEAN}" = "daily" ]; then
+  if [ -f "${_STAMP_FILE}" ] && [ "$(cat "${_STAMP_FILE}")" = "${_TODAY}" ]; then
+    echo "Today's evaluation cache exists (${_TODAY}), reusing results."
+    CLEAN=0
+  else
+    echo "New day or no stamp found — cleaning cache for fresh eval."
+    CLEAN=1
+  fi
+fi
+
 if [ "${CLEAN}" = "1" ]; then
   echo "Cleaning stale ETBench cache in ${WORK_DIR} ..."
   find "${WORK_DIR}" -maxdepth 2 -name '*ETBench*' -type f \
@@ -94,4 +107,11 @@ python launch_workers.py \
 rc=${PIPESTATUS[0]}
 echo "Exit code: ${rc}"
 echo "End time: $(date '+%Y-%m-%d %H:%M:%S')"
+
+# Write today's date stamp on success so same-day reruns skip evaluation
+if [ "${rc}" = "0" ]; then
+  echo "${_TODAY}" > "${_STAMP_FILE}"
+  echo "Evaluation stamp written: ${_TODAY}"
+fi
+
 exit ${rc}
