@@ -250,7 +250,9 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             batch_indices.append(idx)
             batch_structs.append(struct)
             _pt = _extract_prompt_text(struct)
-            if getattr(model, 'post_prompt', None):
+            # Only append post_prompt when the dataset does NOT manage format instructions.
+            _has_sentinel = any(s.get('type') == '_managed_prompt' for s in struct)
+            if getattr(model, 'post_prompt', None) and not _has_sentinel:
                 _pt += '\n' + model.post_prompt
             prompts_dict[idx] = _pt
 
@@ -337,7 +339,8 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             batch_indices.append(idx)
             batch_structs.append(struct)
             _pt = _extract_prompt_text(struct)
-            if getattr(model, 'post_prompt', None):
+            _has_sentinel = any(s.get('type') == '_managed_prompt' for s in struct)
+            if getattr(model, 'post_prompt', None) and not _has_sentinel:
                 _pt += '\n' + model.post_prompt
             prompts_dict[idx] = _pt
 
@@ -419,7 +422,8 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             continue
 
         _pt = _extract_prompt_text(struct)
-        if getattr(model, 'post_prompt', None):
+        _has_sentinel = any(s.get('type') == '_managed_prompt' for s in struct)
+        if getattr(model, 'post_prompt', None) and not _has_sentinel:
             _pt += '\n' + model.post_prompt
         prompts_dict[idx] = _pt
 
