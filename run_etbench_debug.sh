@@ -69,6 +69,9 @@ if [ "${CLEAN}" = "1" ]; then
     \( -name '*.pkl' -o -name '*.tsv' -o -name '*.jsonl' -o -name '*.xlsx' \
        -o -name '*etbench_score*' -o -name '*etbench_acc*' \) \
     -print -delete 2>/dev/null || true
+  # Also remove pre-built TSV under ETBENCH_DIR (may be stale / empty)
+  find "${ETBENCH_DIR}" -maxdepth 1 -name 'ETBench*.tsv' -type f \
+    -print -delete 2>/dev/null || true
   echo "Cache cleaned."
 fi
 

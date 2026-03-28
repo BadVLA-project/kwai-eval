@@ -5,12 +5,13 @@ HuggingFace: https://huggingface.co/datasets/PolyU-ChenLab/ETBench
 
 12 tasks across 4 capabilities:
   Referring:   tvg (Temporal Video Grounding), evs (Event-level Visual Search),
-               rvs (Referring Video Summarization)
+               tem (Temporal Event Matching / Referring Video Summarization)
   Grounding:   dvc (Dense Video Captioning), slc (Sequential Location Caption)
-  Dense Cap.:  ec  (Event Counting)
+  Dense Cap.:  epm (Event Point Marking / Event Counting)
   Complex:     rar (Referring Action Recognition), eca (Event Caption Assessment),
                rvq (Referring Video QA), gvq (Grounded Video QA),
-               tas (Temporal Action Segmentation), evl (Event-level Localization)
+               tal (Temporal Action Localization / Segmentation),
+               vhd (Video Highlight Detection / Event-level Localization)
 
 Annotation format (etbench_txt_v1.0.json) — list of dicts:
   {
@@ -38,16 +39,16 @@ from ..smp import *
 from .video_base import VideoBaseDataset
 
 # ---------------------------------------------------------------------------
-# Task categorisation
+# Task categorisation (codes match annotation etbench_txt_v1.0.json)
 # ---------------------------------------------------------------------------
 # Tasks that need temporal grounding evaluation (predict start-end spans)
-_GROUNDING_TASKS = {'tvg', 'evs', 'rvs', 'evl'}
+_GROUNDING_TASKS = {'tvg', 'evs', 'tem', 'vhd'}
 # Multiple-choice tasks (predict a letter option)
 _MCQ_TASKS = {'rar', 'eca', 'rvq', 'gvq'}
 # Dense captioning tasks (predict multiple spans with captions)
 _CAPTIONING_TASKS = {'dvc', 'slc'}
-# All other tasks (ec, tas...)
-_OTHER_TASKS = {'ec', 'tas'}
+# All other tasks (epm, tal...)
+_OTHER_TASKS = {'epm', 'tal'}
 
 # Server-side data root (preferred); fallback: LMUDataRoot() / ETBench
 _SERVER_ROOT = '/m2v_intern/xuboshen/zgw/Benchmarks/ETBench'
@@ -118,6 +119,45 @@ def _format_suffix_for_task(task_code):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _apply_subset_filter(samples, subset_file):
+    """Filter annotation samples using the official ETBench subset.json.
+
+    subset.json is a nested dict: ``{task: {source: [local_indices]}}``.
+    The local indices are positions within each (task, source) group of the
+    annotation list.  Task codes in subset.json match the annotation directly.
+    """
+    with open(subset_file, 'r') as f:
+        subset_spec = json.load(f)
+
+    # Flat list of global idx — simple path
+    if isinstance(subset_spec, list):
+        id_set = {int(x) for x in subset_spec}
+        return [s for s in samples if int(s['idx']) in id_set]
+
+    # ── Nested dict: {task: {source: [local_indices]}} ──
+
+    # Group annotation samples by (task, source), preserving order.
+    from collections import defaultdict
+    groups = defaultdict(list)   # (task, source) → [sample, ...]
+    for s in samples:
+        groups[(s['task'], s.get('source', ''))].append(s)
+
+    selected = []
+    for task, sources in subset_spec.items():
+        for src_name, idx_list in sources.items():
+            group = groups.get((task, src_name), [])
+            for local_idx in idx_list:
+                if 0 <= local_idx < len(group):
+                    selected.append(group[local_idx])
+                else:
+                    print(
+                        f'ETBench subset: index {local_idx} out of range for '
+                        f'({task}, {src_name}) with {len(group)} samples'
+                    )
+
+    print(f'ETBench subset: selected {len(selected)} / {len(samples)} samples')
+    return selected
 
 def _parse_span(text):
     """Extract a single (start, end) float pair from free-form model output.
@@ -331,14 +371,23 @@ class ETBench(VideoBaseDataset):
                 samples = json.load(f)
 
             # Apply subset filter
-            if is_subset and osp.exists(subset_file):
-                with open(subset_file, 'r') as f:
-                    subset_ids = set(json.load(f))
-                samples = [s for s in samples if s['idx'] in subset_ids]
+            if is_subset:
+                assert osp.exists(subset_file), (
+                    f'ETBench subset file not found: {subset_file}\n'
+                    f'Download it from the ETBench HuggingFace repo or use '
+                    f'the full ETBench dataset instead of ETBench_subset.'
+                )
+                samples = _apply_subset_filter(samples, subset_file)
 
             # Apply task filter
             if self._task_filter:
                 samples = [s for s in samples if s['task'] in self._task_filter]
+
+            assert len(samples) > 0, (
+                f'ETBench: 0 samples after filtering '
+                f'(subset={is_subset}, task_filter={self._task_filter}). '
+                f'Check annotation file and subset.json compatibility.'
+            )
 
             rows = []
             for sample in samples:
