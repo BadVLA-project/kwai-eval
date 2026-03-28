@@ -582,9 +582,15 @@ class ETBench(VideoBaseDataset):
                 # ---- Grounding tasks ----
                 if task in _GROUNDING_TASKS:
                     gt_spans = gt_dict.get('tgt') or []
-                    # Normalise: tgt may be [[s,e],...] or [s,e]
-                    if gt_spans and not isinstance(gt_spans[0], list):
-                        gt_spans = [gt_spans]
+                    # Normalise tgt to [[s,e],...] regardless of nesting depth
+                    if gt_spans:
+                        if isinstance(gt_spans[0], (int, float)):
+                            # Flat pair [s, e] → wrap
+                            gt_spans = [gt_spans]
+                        elif (isinstance(gt_spans[0], list) and gt_spans[0]
+                              and isinstance(gt_spans[0][0], list)):
+                            # Extra nesting [[[s,e],...]] → unwrap one layer
+                            gt_spans = gt_spans[0]
                     ps, pe = _parse_span(pred)
                     if ps is None:
                         rec['iou'] = 0.0
