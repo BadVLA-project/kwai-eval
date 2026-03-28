@@ -295,6 +295,9 @@ def DATASET_MODALITY(dataset, *, default: str = 'IMAGE') -> str:
         if dataset in cls.supported_datasets():
             if hasattr(cls, 'MODALITY'):
                 return cls.MODALITY
+    # Check video dataset config (handles variant names like ETBench_subset_1fps)
+    if dataset in supported_video_datasets:
+        return 'VIDEO'
     # Have to add specific routine to handle ConcatDataset
     if dataset in ConcatDataset.DATASET_SETS:
         dataset_list = ConcatDataset.DATASET_SETS[dataset]

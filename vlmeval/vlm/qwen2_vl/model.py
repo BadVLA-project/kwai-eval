@@ -565,30 +565,24 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         print('finishing process vision info in vllm.')
 
         videos_nd = []
+        video_inputs = None
         if DATASET_MODALITY(dataset) == 'VIDEO' and 'megabench' not in dataset.lower():
             if videos and len(videos) == 1:
                 videos_nd = [videos[0].detach().cpu().numpy().transpose(0, 2, 3, 1)]
+                video_inputs = {
+                    "prompt": text,
+                    "multi_modal_data": {"video": videos_nd[0]},
+                    "mm_processor_kwargs": video_kwargs if video_kwargs is not None else {}
+                }
+                if self.use_audio_in_video:
+                    import vllm
+                    assert not vllm.envs.VLLM_USE_V1, ("V1 does not support use_audio_in_video. Please launch this example with `VLLM_USE_V1=0`.")  # noqa: E501
+                    video_inputs["multi_modal_data"]["audio"] = audios[0]
+                    video_inputs['mm_processor_kwargs']['use_audio_in_video'] = True
+                if videos_nd[0].shape[0] > VLLM_MAX_IMAGE_INPUT_NUM:
+                    print('video input sequence may be too long for vllm, Maybe cannot generate response for VLLM')
             else:
                 logging.warning(f"Expected 1 video but got {len(videos) if videos else 0}, falling back to text-only.")
-
-            # video_inputs = {
-            #     "prompt": text[0],
-            #     "multi_modal_data": {"video": videos_nd[0]},
-            #     "mm_processor_kwargs":{}
-            # }
-            video_inputs = {
-                "prompt": text,
-                "multi_modal_data": {"video": videos_nd[0]},
-                # [关键修复] 将捕获到的 video_kwargs 传进去，而不是传空字典 {}
-                "mm_processor_kwargs": video_kwargs if video_kwargs is not None else {}
-            }
-            if self.use_audio_in_video:
-                import vllm
-                assert not vllm.envs.VLLM_USE_V1, ("V1 does not support use_audio_in_video. Please launch this example with `VLLM_USE_V1=0`.")  # noqa: E501
-                video_inputs["multi_modal_data"]["audio"] = audios[0]
-                video_inputs['mm_processor_kwargs']['use_audio_in_video'] = True
-            if videos_nd[0].shape[0] > VLLM_MAX_IMAGE_INPUT_NUM:
-                print('video input sequence may be too long for vllm, Maybe cannot generate response for VLLM')
         sampling_params = SamplingParams(
             temperature=0.0, max_tokens=self.max_new_tokens, stop_token_ids=None
         )
@@ -601,7 +595,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                 sampling_params=sampling_params,
                 use_tqdm=False,
             )
-        elif videos_nd:
+        elif video_inputs is not None:
             outputs = self.llm.generate(
                 video_inputs,
                 sampling_params=sampling_params,
