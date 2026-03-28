@@ -86,9 +86,8 @@ class BaseModel:
                     res.append(dict(type=mime.split('/')[0], value=pth))
             return res
         elif self.check_content(inputs) == 'listdict':
+            inputs = [item for item in inputs if item.get('type') != '_managed_prompt']
             for item in inputs:
-                if item.get('type') == '_managed_prompt':
-                    continue
                 assert 'type' in item and 'value' in item
                 mime, s = parse_file(item['value'])
                 if mime is None:
