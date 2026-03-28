@@ -281,7 +281,7 @@ def _tvg_eval(samples):
             continue
         # Use best-matching span as in tvg_format output
         ps, pe = pred_spans[0]
-        gt_arr = np.array([gt], dtype=float)
+        gt_arr = np.array(gt, dtype=float)
         pred_arr = np.array([[ps, pe]], dtype=float)
         iou = float(_np_temporal_iou(gt_arr, pred_arr))
         sum_iou += iou
@@ -504,7 +504,7 @@ def _gvq_eval(samples, st):
             rec_cnt += 1
             continue
         ps, pe = pred_spans[0]
-        gt_arr = np.array([gt], dtype=float)
+        gt_arr = np.array(gt, dtype=float)
         pred_arr = np.array([[ps, pe]], dtype=float)
         iou = float(_np_temporal_iou(gt_arr, pred_arr))
         sum_iou += iou
