@@ -36,8 +36,11 @@ import json
 import os
 import random
 import re
+import shutil
 import string
+import subprocess
 import os.path as osp
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 
@@ -839,6 +842,103 @@ def _np_temporal_iou(gt, pred):
 
 
 # ---------------------------------------------------------------------------
+# Video compression (mirrors official compress_videos.py)
+# ---------------------------------------------------------------------------
+
+_COMPRESS_FPS = 3
+_COMPRESS_SIZE = 224   # shortest-side pixels
+
+
+def _compress_single_video(src_path: str, dst_path: str,
+                           fps: int = _COMPRESS_FPS,
+                           size: int = _COMPRESS_SIZE) -> bool:
+    """Compress one video using ffmpeg (same as official compress_videos.py).
+
+    - Re-encode to *fps* FPS, shortest side = *size* px (even dimensions).
+    - Strip audio.
+    - Output H.264 MP4.
+    Returns True on success.
+    """
+    os.makedirs(osp.dirname(dst_path), exist_ok=True)
+    if osp.exists(dst_path) and os.path.getsize(dst_path) > 0:
+        return True
+    # scale filter: set shortest side to `size`, keep aspect ratio, ensure even dims
+    scale_filter = (
+        f"scale='if(gte(iw,ih),-2,{size})':'if(gte(iw,ih),{size},-2)'"
+    )
+    cmd = [
+        'ffmpeg', '-y', '-i', src_path,
+        '-vf', f'{scale_filter},fps={fps}',
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+        '-an',  # remove audio
+        '-loglevel', 'error',
+        dst_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, timeout=300)
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f'ETBench: compress failed for {src_path}: {e}')
+        if osp.exists(dst_path):
+            os.remove(dst_path)
+        return False
+
+
+def _compress_videos_dir(src_dir: str, dst_dir: str,
+                         fps: int = _COMPRESS_FPS,
+                         size: int = _COMPRESS_SIZE,
+                         workers: int | None = None) -> None:
+    """Compress all videos under *src_dir* into *dst_dir*, preserving directory structure.
+
+    Mirrors the official ETBench compress_videos.py behaviour:
+      ffmpeg → 3 FPS, 224px shortest side, no audio, H.264.
+    """
+    if shutil.which('ffmpeg') is None:
+        raise RuntimeError(
+            'ETBench: ffmpeg not found. Install ffmpeg to enable automatic '
+            'video compression (or manually run compress_videos.py).'
+        )
+
+    video_exts = {'.mp4', '.avi', '.mkv', '.mov', '.webm', '.flv'}
+    tasks: list[tuple[str, str]] = []
+    for root, _dirs, files in os.walk(src_dir):
+        for fname in files:
+            if osp.splitext(fname)[1].lower() not in video_exts:
+                continue
+            src_path = osp.join(root, fname)
+            rel = osp.relpath(src_path, src_dir)
+            dst_path = osp.join(dst_dir, osp.splitext(rel)[0] + '.mp4')
+            if osp.exists(dst_path) and os.path.getsize(dst_path) > 0:
+                continue
+            tasks.append((src_path, dst_path))
+
+    if not tasks:
+        print('ETBench: all videos already compressed.')
+        return
+
+    n_workers = workers or min(os.cpu_count() or 4, 8)
+    print(f'ETBench: compressing {len(tasks)} videos '
+          f'({fps}fps, {size}px) with {n_workers} workers ...')
+
+    done, failed = 0, 0
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {
+            pool.submit(_compress_single_video, s, d, fps, size): s
+            for s, d in tasks
+        }
+        for fut in as_completed(futures):
+            if fut.result():
+                done += 1
+            else:
+                failed += 1
+            if (done + failed) % 200 == 0 or (done + failed) == len(tasks):
+                print(f'ETBench: compress progress {done + failed}/{len(tasks)} '
+                      f'(ok={done}, fail={failed})')
+
+    print(f'ETBench: compression finished. ok={done}, fail={failed}')
+
+
+# ---------------------------------------------------------------------------
 # Dataset class
 # ---------------------------------------------------------------------------
 
@@ -1033,25 +1133,40 @@ class ETBench(VideoBaseDataset):
             video_dir = vs
         elif vs == 'compressed':
             video_dir = osp.join(data_root, 'videos_compressed')
+            if not osp.isdir(video_dir):
+                # Auto-compress from raw videos (mirrors official compress_videos.py)
+                raw_dir = osp.join(data_root, 'videos')
+                assert osp.isdir(raw_dir), (
+                    f'ETBench: neither videos_compressed nor videos found at {data_root}. '
+                    f'Download the ETBench dataset first.'
+                )
+                _compress_videos_dir(raw_dir, video_dir)
             assert osp.isdir(video_dir), (
-                f'ETBench: videos_compressed not found at {video_dir}. '
-                f'Download compressed videos or use video_source="auto".'
+                f'ETBench: videos_compressed not found at {video_dir} after compression attempt.'
             )
         elif vs == 'raw':
             video_dir = osp.join(data_root, 'videos')
         else:  # 'auto' — prefer videos_compressed, fall back to raw
-            for candidate in ('videos_compressed', 'videos'):
-                cand_dir = osp.join(data_root, candidate)
-                if osp.isdir(cand_dir):
+            compressed_dir = osp.join(data_root, 'videos_compressed')
+            raw_dir = osp.join(data_root, 'videos')
+            # Check if compressed dir exists and has video subdirs
+            found = False
+            for candidate in (compressed_dir, raw_dir):
+                if osp.isdir(candidate):
                     for sub in _VIDEO_SUBDIRS:
-                        if osp.isdir(osp.join(cand_dir, sub)):
-                            video_dir = cand_dir
+                        if osp.isdir(osp.join(candidate, sub)):
+                            video_dir = candidate
+                            found = True
                             break
-                    else:
-                        continue
+                if found:
                     break
-            else:
-                video_dir = osp.join(data_root, 'videos')   # fallback
+            if not found:
+                # If raw exists but compressed doesn't, auto-compress
+                if osp.isdir(raw_dir):
+                    _compress_videos_dir(raw_dir, compressed_dir)
+                    video_dir = compressed_dir
+                else:
+                    video_dir = raw_dir  # fallback
 
         return dict(data_file=tsv_file, root=video_dir)
 
