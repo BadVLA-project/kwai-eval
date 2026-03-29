@@ -878,6 +878,13 @@ class ETBench(VideoBaseDataset):
         If given, only include samples whose task code is in this list.
     data_root : str | None
         Override the data root directory.
+    video_source : str
+        Controls which video directory to use for frame extraction:
+        - ``'auto'``       (default): prefer ``videos_compressed`` when present,
+          fall back to ``videos``. Matches official ETBench behaviour.
+        - ``'compressed'``: always use ``videos_compressed``. Errors if absent.
+        - ``'raw'``       : always use the raw ``videos`` directory.
+        - Any absolute/relative path string: use that directory directly.
     """
 
     TYPE = 'Video-VQA'
@@ -889,9 +896,11 @@ class ETBench(VideoBaseDataset):
         fps=_OFFICIAL_FPS,
         task_filter=None,
         data_root=None,
+        video_source='auto',
     ):
         self._task_filter = task_filter
         self._data_root_override = data_root
+        self._video_source = video_source
         super().__init__(dataset=dataset, nframe=nframe, fps=fps)
 
     @classmethod
@@ -1017,20 +1026,32 @@ class ETBench(VideoBaseDataset):
             os.makedirs(data_root, exist_ok=True)
             df.to_csv(tsv_file, sep='\t', index=False)
 
-        # Prefer videos_compressed (official config) over raw videos
-        for candidate in ('videos_compressed', 'videos'):
-            cand_dir = osp.join(data_root, candidate)
-            if osp.isdir(cand_dir):
-                # Accept if any known subdirectory exists inside
-                for sub in _VIDEO_SUBDIRS:
-                    if osp.isdir(osp.join(cand_dir, sub)):
-                        video_dir = cand_dir
-                        break
-                else:
-                    continue
-                break
-        else:
-            video_dir = osp.join(data_root, 'videos')   # fallback
+        # Select video directory based on video_source parameter
+        vs = self._video_source
+        if vs not in ('auto', 'compressed', 'raw') and osp.isdir(vs):
+            # Explicit custom path
+            video_dir = vs
+        elif vs == 'compressed':
+            video_dir = osp.join(data_root, 'videos_compressed')
+            assert osp.isdir(video_dir), (
+                f'ETBench: videos_compressed not found at {video_dir}. '
+                f'Download compressed videos or use video_source="auto".'
+            )
+        elif vs == 'raw':
+            video_dir = osp.join(data_root, 'videos')
+        else:  # 'auto' — prefer videos_compressed, fall back to raw
+            for candidate in ('videos_compressed', 'videos'):
+                cand_dir = osp.join(data_root, candidate)
+                if osp.isdir(cand_dir):
+                    for sub in _VIDEO_SUBDIRS:
+                        if osp.isdir(osp.join(cand_dir, sub)):
+                            video_dir = cand_dir
+                            break
+                    else:
+                        continue
+                    break
+            else:
+                video_dir = osp.join(data_root, 'videos')   # fallback
 
         return dict(data_file=tsv_file, root=video_dir)
 
@@ -1047,17 +1068,25 @@ class ETBench(VideoBaseDataset):
         matches = self.data[self.data['video'] == video]
         if len(matches) > 0 and 'video_path' in self.data.columns:
             rel_path = matches.iloc[0]['video_path']
-            candidate = osp.join(self.data_root, rel_path)
-            if osp.exists(candidate):
-                vid_path = candidate
-            # Also try compressed variant
-            if vid_path is None:
-                compressed_root = osp.join(
-                    osp.dirname(self.data_root), 'videos_compressed'
-                )
-                cand2 = osp.join(compressed_root, rel_path)
-                if osp.exists(cand2):
-                    vid_path = cand2
+            # Build lookup order based on video_source
+            vs = self._video_source
+            data_parent = osp.dirname(self.data_root)
+            if vs not in ('auto', 'compressed', 'raw') and osp.isdir(vs):
+                _lookup_roots = [vs]
+            elif vs == 'compressed':
+                _lookup_roots = [osp.join(data_parent, 'videos_compressed')]
+            elif vs == 'raw':
+                _lookup_roots = [self.data_root]
+            else:  # auto
+                _lookup_roots = [
+                    self.data_root,
+                    osp.join(data_parent, 'videos_compressed'),
+                ]
+            for root in _lookup_roots:
+                cand = osp.join(root, rel_path)
+                if osp.exists(cand):
+                    vid_path = cand
+                    break
 
         if vid_path is None:
             for ext in ['.mp4', '.avi', '.mkv', '.mov', '.webm']:
@@ -1115,17 +1144,25 @@ class ETBench(VideoBaseDataset):
         # Prefer video_path column if present in TSV
         video_path = None
         if 'video_path' in line and pd.notna(line['video_path']):
-            cand = osp.join(self.data_root, str(line['video_path']))
-            if osp.exists(cand):
-                video_path = cand
-            else:
-                # Try compressed
-                compressed_root = osp.join(
-                    osp.dirname(self.data_root), 'videos_compressed'
-                )
-                cand2 = osp.join(compressed_root, str(line['video_path']))
-                if osp.exists(cand2):
-                    video_path = cand2
+            rel_path = str(line['video_path'])
+            vs = self._video_source
+            data_parent = osp.dirname(self.data_root)
+            if vs not in ('auto', 'compressed', 'raw') and osp.isdir(vs):
+                _bp_roots = [vs]
+            elif vs == 'compressed':
+                _bp_roots = [osp.join(data_parent, 'videos_compressed')]
+            elif vs == 'raw':
+                _bp_roots = [self.data_root]
+            else:  # auto
+                _bp_roots = [
+                    self.data_root,
+                    osp.join(data_parent, 'videos_compressed'),
+                ]
+            for root in _bp_roots:
+                cand = osp.join(root, rel_path)
+                if osp.exists(cand):
+                    video_path = cand
+                    break
 
         if video_path is None:
             for ext in ['.mp4', '.avi', '.mkv', '.mov']:

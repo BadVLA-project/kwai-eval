@@ -242,7 +242,13 @@ charades_sta_dataset = {
 
 etbench_dataset = {
     # ── Official setting (matches infer_etbench.py: load_video fps=1 on videos_compressed) ──
-    'ETBench_1fps':    partial(ETBench, dataset='ETBench', fps=1.0),      # <── official
+    'ETBench_1fps':    partial(ETBench, dataset='ETBench', fps=1.0),      # <── official (auto video source)
+    # ── Explicit video_source=compressed: strictly use videos_compressed (mirrors paper setting) ──
+    'ETBench_1fps_compressed':    partial(ETBench, dataset='ETBench', fps=1.0, video_source='compressed'),
+    'ETBench_subset_1fps_compressed': partial(ETBench, dataset='ETBench_subset', fps=1.0, video_source='compressed'),
+    # ── Explicit video_source=raw: use original raw videos ──
+    'ETBench_1fps_raw':    partial(ETBench, dataset='ETBench', fps=1.0, video_source='raw'),
+    'ETBench_subset_1fps_raw': partial(ETBench, dataset='ETBench_subset', fps=1.0, video_source='raw'),
     # Full benchmark — alternative frame-count variants
     'ETBench_16frame': partial(ETBench, dataset='ETBench', nframe=16, fps=-1),
     'ETBench_32frame': partial(ETBench, dataset='ETBench', nframe=32, fps=-1),
