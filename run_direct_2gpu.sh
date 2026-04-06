@@ -44,10 +44,7 @@ EVAL_ID="${EVAL_ID:-}"
 export USE_COT=0
 export TEMPERATURE=0
 
-# ---------------------------------------------------------------------------
-# GPU assignment: ranks 0-7 → physical GPUs 0-7 (全8卡)
-# ---------------------------------------------------------------------------
-NGPU=8
+NGPU=2
 GPU_OFFSET=0
 
 # ---------------------------------------------------------------------------
@@ -95,12 +92,10 @@ DATASETS=(
 MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"
 
 MODELS=(
-  Qwen3-VL-4B-Instruct
-  Qwen3-VL-4B-Instruct_aot_v2t_strict
   Qwen3-VL-4B-Instruct_aot_v2t
 )
 
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_8gpu_v1}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_2gpu}"
 
 # ---------------------------------------------------------------------------
 # Launch

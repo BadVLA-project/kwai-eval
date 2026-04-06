@@ -2,7 +2,7 @@
 """Generate all visualization figures for video benchmark evaluation.
 
 Usage:
-    python -m vis.main --work_dir /path/to/WORK_DIR [--output_dir vis/output] [--format png]
+    python -m vis.main --work_dir /m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_8gpu --serve --port 8890 [--output_dir vis/output] [--format png]
 """
 
 import argparse

@@ -78,18 +78,13 @@ export ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
 # Datasets & Model
 # ---------------------------------------------------------------------------
 DATASETS=(
-  Video_Holmes_64frame
   AoTBench_ReverseFilm_16frame
   AoTBench_UCF101_16frame
   AoTBench_Rtime_t2v_16frame
   AoTBench_Rtime_v2t_16frame
   AoTBench_QA_16frame
-  FutureOmni_64frame
   CharadesTimeLens_1fps
   MVBench_MP4_1fps
-  PerceptionTest_val_16frame
-  Video-MME_64frame
-  ETBench_1fps
 )
 
 MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"
