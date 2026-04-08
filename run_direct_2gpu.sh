@@ -43,6 +43,7 @@ EVAL_ID="${EVAL_ID:-}"
 # ---------------------------------------------------------------------------
 export USE_COT=0
 export TEMPERATURE=0
+export TIMELENS_EVAL_MODE=timelens
 
 NGPU=2
 GPU_OFFSET=0
@@ -79,14 +80,9 @@ export ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
 # Datasets & Model
 # ---------------------------------------------------------------------------
 DATASETS=(
-  AoTBench_ReverseFilm_16frame
-  AoTBench_UCF101_16frame
-  AoTBench_Rtime_t2v_16frame
-  AoTBench_Rtime_v2t_16frame
-  AoTBench_QA_16frame
-  CharadesTimeLens_1fps
-  MVBench_MP4_1fps
-  ETBench_1fps
+  TimeLensBench_Charades_1fps
+  TimeLensBench_ActivityNet_1fps
+  TimeLensBench_QVHighlights_1fps
 )
 
 MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"
@@ -133,5 +129,42 @@ if [ -n "${EVAL_ID}" ]; then
   echo "   eval_id: ${EVAL_ID}"
 fi
 echo "=================================================================="
+
+# ---------------------------------------------------------------------------
+# GPU filler — keeps util high during idle gaps (barriers, prompt building, etc.)
+# Disable with: GPU_FILLER=0
+# ---------------------------------------------------------------------------
+GPU_FILLER="${GPU_FILLER:-1}"
+FILLER_PID=""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Build GPU list from offset
+FILLER_GPU_LIST=""
+for i in $(seq 0 $((NGPU - 1))); do
+  [ -n "${FILLER_GPU_LIST}" ] && FILLER_GPU_LIST="${FILLER_GPU_LIST},"
+  FILLER_GPU_LIST="${FILLER_GPU_LIST}$((GPU_OFFSET + i))"
+done
+
+if [ "${GPU_FILLER}" = "1" ] && [ -f "${SCRIPT_DIR}/gpu_filler.py" ]; then
+  echo "[eval] Starting GPU filler on GPUs ${FILLER_GPU_LIST} (target=${FILLER_TARGET_UTIL:-80}%) ..."
+  python "${SCRIPT_DIR}/gpu_filler.py" \
+    --gpus "${FILLER_GPU_LIST}" \
+    --target-util "${FILLER_TARGET_UTIL:-80}" \
+    --matrix-size "${FILLER_MATRIX_SIZE:-4096}" \
+    --batch "${FILLER_BATCH:-10}" \
+    --gap-matrix "${FILLER_GAP_MATRIX:-2048}" \
+    --push-matrix "${FILLER_PUSH_MATRIX:-3072}" &
+  FILLER_PID=$!
+  echo "[eval] GPU filler started (PID=${FILLER_PID})"
+fi
+
+cleanup_filler() {
+  if [ -n "${FILLER_PID}" ]; then
+    kill "${FILLER_PID}" 2>/dev/null || true
+    wait "${FILLER_PID}" 2>/dev/null || true
+    echo "[eval] GPU filler stopped"
+  fi
+}
+trap cleanup_filler EXIT
 
 "${CMD[@]}"

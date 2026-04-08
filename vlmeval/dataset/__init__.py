@@ -69,6 +69,7 @@ from .worldsense import WorldSense
 from .aotbench import AoTBench
 from .futureomni import FutureOmni
 from .charades_sta import CharadesSTA, CharadesTimeLens
+from .timelens_bench import TimeLensBench
 from .etbench import ETBench
 from .perceptiontest import PerceptionTest
 from .qbench_video import QBench_Video, QBench_Video_MCQ, QBench_Video_VQA
@@ -249,7 +250,7 @@ VIDEO_DATASET = [
     Video_MMLU_CAP, Video_MMLU_QA,
     Video_Holmes, VCRBench, CGAVCounting,
     EgoExoBench_MCQ, DREAM, VideoTT, VideoMMMU, VSIBench,
-    CharadesSTA, CharadesTimeLens, PerceptionTest,
+    CharadesSTA, CharadesTimeLens, TimeLensBench, PerceptionTest,
 
 ]
 

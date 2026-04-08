@@ -279,6 +279,30 @@ charades_timelens_dataset = {
     'CharadesTimeLens_2fps': partial(CharadesTimeLens, dataset='CharadesTimeLens', fps=2.0),
 }
 
+timelens_bench_dataset = {
+    # --- Charades ---
+    'TimeLensBench_Charades_8frame': partial(TimeLensBench, dataset='TimeLensBench_Charades', nframe=8),
+    'TimeLensBench_Charades_16frame': partial(TimeLensBench, dataset='TimeLensBench_Charades', nframe=16),
+    'TimeLensBench_Charades_32frame': partial(TimeLensBench, dataset='TimeLensBench_Charades', nframe=32),
+    'TimeLensBench_Charades_64frame': partial(TimeLensBench, dataset='TimeLensBench_Charades', nframe=64),
+    'TimeLensBench_Charades_1fps': partial(TimeLensBench, dataset='TimeLensBench_Charades', fps=1.0),
+    'TimeLensBench_Charades_2fps': partial(TimeLensBench, dataset='TimeLensBench_Charades', fps=2.0),
+    # --- ActivityNet ---
+    'TimeLensBench_ActivityNet_8frame': partial(TimeLensBench, dataset='TimeLensBench_ActivityNet', nframe=8),
+    'TimeLensBench_ActivityNet_16frame': partial(TimeLensBench, dataset='TimeLensBench_ActivityNet', nframe=16),
+    'TimeLensBench_ActivityNet_32frame': partial(TimeLensBench, dataset='TimeLensBench_ActivityNet', nframe=32),
+    'TimeLensBench_ActivityNet_64frame': partial(TimeLensBench, dataset='TimeLensBench_ActivityNet', nframe=64),
+    'TimeLensBench_ActivityNet_1fps': partial(TimeLensBench, dataset='TimeLensBench_ActivityNet', fps=1.0),
+    'TimeLensBench_ActivityNet_2fps': partial(TimeLensBench, dataset='TimeLensBench_ActivityNet', fps=2.0),
+    # --- QVHighlights ---
+    'TimeLensBench_QVHighlights_8frame': partial(TimeLensBench, dataset='TimeLensBench_QVHighlights', nframe=8),
+    'TimeLensBench_QVHighlights_16frame': partial(TimeLensBench, dataset='TimeLensBench_QVHighlights', nframe=16),
+    'TimeLensBench_QVHighlights_32frame': partial(TimeLensBench, dataset='TimeLensBench_QVHighlights', nframe=32),
+    'TimeLensBench_QVHighlights_64frame': partial(TimeLensBench, dataset='TimeLensBench_QVHighlights', nframe=64),
+    'TimeLensBench_QVHighlights_1fps': partial(TimeLensBench, dataset='TimeLensBench_QVHighlights', fps=1.0),
+    'TimeLensBench_QVHighlights_2fps': partial(TimeLensBench, dataset='TimeLensBench_QVHighlights', fps=2.0),
+}
+
 perceptiontest_dataset = {
     'PerceptionTest_val_8frame': partial(PerceptionTest, dataset='PerceptionTest_val', nframe=8),
     'PerceptionTest_val_16frame': partial(PerceptionTest, dataset='PerceptionTest_val', nframe=16),
@@ -296,7 +320,7 @@ dataset_groups = [
     megabench_dataset, qbench_video_dataset, moviechat1k_dataset, vdc_dataset, video_holmes_dataset, vcrbench_dataset,
     cg_av_counting_dataset, video_mmlu_dataset, egoexobench_dataset, dream_1k_dataset, video_tt_dataset,
     vsibench_dataset, aotbench_dataset, futureomni_dataset,
-    charades_sta_dataset, charades_timelens_dataset, perceptiontest_dataset,
+    charades_sta_dataset, charades_timelens_dataset, timelens_bench_dataset, perceptiontest_dataset,
     etbench_dataset,
 ]
 
