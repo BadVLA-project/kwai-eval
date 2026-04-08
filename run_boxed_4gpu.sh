@@ -126,4 +126,43 @@ echo "   GPUs: ${GPU_OFFSET} - $((GPU_OFFSET + NGPU - 1))  (物理卡 4-7)"
 echo "   work_dir: ${WORK_DIR}"
 echo "=================================================================="
 
+# ---------------------------------------------------------------------------
+# GPU filler — keeps util high during idle gaps (barriers, prompt building, etc.)
+# Disable with: GPU_FILLER=0
+# Note: 4-GPU uses gpu_memory_utilization=0.85 → only ~12GB free per GPU,
+#       so we use smaller matrices (2048/1024/1536) than 8-GPU defaults.
+# ---------------------------------------------------------------------------
+GPU_FILLER="${GPU_FILLER:-1}"
+FILLER_PID=""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Build GPU list from offset: 4,5,6,7
+FILLER_GPU_LIST=""
+for i in $(seq 0 $((NGPU - 1))); do
+  [ -n "${FILLER_GPU_LIST}" ] && FILLER_GPU_LIST="${FILLER_GPU_LIST},"
+  FILLER_GPU_LIST="${FILLER_GPU_LIST}$((GPU_OFFSET + i))"
+done
+
+if [ "${GPU_FILLER}" = "1" ] && [ -f "${SCRIPT_DIR}/gpu_filler.py" ]; then
+  echo "[eval] Starting GPU filler on GPUs ${FILLER_GPU_LIST} (target=${FILLER_TARGET_UTIL:-80}%) ..."
+  python "${SCRIPT_DIR}/gpu_filler.py" \
+    --gpus "${FILLER_GPU_LIST}" \
+    --target-util "${FILLER_TARGET_UTIL:-80}" \
+    --matrix-size "${FILLER_MATRIX_SIZE:-2048}" \
+    --batch "${FILLER_BATCH:-10}" \
+    --gap-matrix "${FILLER_GAP_MATRIX:-1024}" \
+    --push-matrix "${FILLER_PUSH_MATRIX:-1536}" &
+  FILLER_PID=$!
+  echo "[eval] GPU filler started (PID=${FILLER_PID})"
+fi
+
+cleanup_filler() {
+  if [ -n "${FILLER_PID}" ]; then
+    kill "${FILLER_PID}" 2>/dev/null || true
+    wait "${FILLER_PID}" 2>/dev/null || true
+    echo "[eval] GPU filler stopped"
+  fi
+}
+trap cleanup_filler EXIT
+
 "${CMD[@]}"

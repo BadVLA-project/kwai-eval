@@ -139,4 +139,33 @@ if [ -n "${EVAL_ID}" ]; then
 fi
 echo "=================================================================="
 
+# ---------------------------------------------------------------------------
+# GPU filler — keeps util high during idle gaps (barriers, prompt building, etc.)
+# Disable with: GPU_FILLER=0
+# ---------------------------------------------------------------------------
+GPU_FILLER="${GPU_FILLER:-1}"
+FILLER_PID=""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "${GPU_FILLER}" = "1" ] && [ -f "${SCRIPT_DIR}/gpu_filler.py" ]; then
+  echo "[eval] Starting GPU filler (target=${FILLER_TARGET_UTIL:-80}%) ..."
+  python "${SCRIPT_DIR}/gpu_filler.py" \
+    --target-util "${FILLER_TARGET_UTIL:-80}" \
+    --matrix-size "${FILLER_MATRIX_SIZE:-4096}" \
+    --batch "${FILLER_BATCH:-10}" \
+    --gap-matrix "${FILLER_GAP_MATRIX:-2048}" \
+    --push-matrix "${FILLER_PUSH_MATRIX:-3072}" &
+  FILLER_PID=$!
+  echo "[eval] GPU filler started (PID=${FILLER_PID})"
+fi
+
+cleanup_filler() {
+  if [ -n "${FILLER_PID}" ]; then
+    kill "${FILLER_PID}" 2>/dev/null || true
+    wait "${FILLER_PID}" 2>/dev/null || true
+    echo "[eval] GPU filler stopped"
+  fi
+}
+trap cleanup_filler EXIT
+
 "${CMD[@]}"
