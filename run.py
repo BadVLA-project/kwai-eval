@@ -191,7 +191,7 @@ You can launch the evaluation by setting either --data and --model or --config.
     parser.add_argument(
         '--eval-id-mode',
         type=str,
-        default='day_hash',
+        default='day',
         choices=['day_hash', 'day'],
         help='Directory naming strategy under each model: day_hash=T<day>_G<hash> (default), day=T<day>'
     )
