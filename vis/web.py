@@ -1,1213 +1,427 @@
-"""Generate a self-contained interactive HTML dashboard for ablation results.
+"""Self-contained interactive HTML dashboard for evaluation results.
 
-Usage (standalone):
-    python -m vis.web --work_dir /path/to/WORK_DIR -o dashboard.html
-
-Or via main.py:
-    python -m vis.main --work_dir /path/to/WORK_DIR --web
+Generates a single HTML file with embedded ECharts that:
+1. Shows a score table (models × benchmarks) with heatmap coloring
+2. Allows selecting models + benchmarks for radar / bar charts
 """
 
+import html
+import http.server
 import json
 import math
 import os
+import socketserver
 
 import numpy as np
 
-from .config import MODEL_INFO, OVERALL_BENCHMARKS, BASE_MODEL, MODEL_LABELS
 from .data_loader import ResultLoader
 
 
-# ── Data export helpers ──────────────────────────────────────────────────
-
 def _sanitize(obj):
-    """Convert numpy / NaN values to JSON-safe Python types."""
-    if isinstance(obj, (np.floating, float)):
-        v = float(obj)
-        return None if (math.isnan(v) or math.isinf(v)) else round(v, 2)
-    if isinstance(obj, (np.integer, np.int64)):
+    """Convert numpy/NaN types to JSON-safe Python types."""
+    if isinstance(obj, (np.integer,)):
         return int(obj)
-    if isinstance(obj, np.bool_):
-        return bool(obj)
+    if isinstance(obj, (np.floating,)):
+        return None if np.isnan(obj) else round(float(obj), 2)
+    if isinstance(obj, float) and math.isnan(obj):
+        return None
     if isinstance(obj, dict):
-        return {str(k): _sanitize(v) for k, v in obj.items()}
+        return {k: _sanitize(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_sanitize(v) for v in obj]
-    if isinstance(obj, np.ndarray):
-        return [_sanitize(v) for v in obj.tolist()]
     return obj
 
 
-def _df_to_dict(df):
-    """DataFrame → {row_label: {col_label: value}} dict."""
-    return {
-        str(r): {str(c): df.loc[r, c] for c in df.columns}
-        for r in df.index
-    }
+def export_data(loader: ResultLoader) -> dict:
+    """Build the complete JSON data payload for the dashboard."""
+    df = loader.load_all_scores()
+    models = loader.models
+    benchmarks = loader.benchmarks
+
+    # Build score matrix
+    scores = {}
+    for m in models:
+        row = {}
+        for b in benchmarks:
+            val = df.loc[m, b] if m in df.index and b in df.columns else float('nan')
+            row[b] = _sanitize(val)
+        scores[m] = row
+
+    return _sanitize({
+        'models': [{'key': m, 'color': loader.model_color(m)} for m in models],
+        'benchmarks': benchmarks,
+        'scores': scores,
+    })
 
 
-def export_data(loader):
-    """Export all chart data as a JSON-serializable dict."""
-    data = {}
-
-    # Dynamic model registry (registered + auto-discovered)
-    all_model_info = loader.get_all_model_info()
-    data['models'] = [
-        {'key': k, 'label': v[0], 'group': v[1], 'color': v[2],
-         'isBase': k == BASE_MODEL}
-        for k, v in all_model_info.items()
-    ]
-    base_label = MODEL_LABELS.get(BASE_MODEL, BASE_MODEL)
-    data['baseLabel'] = base_label
-    data['benchmarks'] = list(OVERALL_BENCHMARKS)
-
-    # Overall matrix (models × 7 benchmarks)
-    data['overall'] = _df_to_dict(loader.load_overall_matrix())
-
-    # VideoMME duration
-    data['vmmeDuration'] = _df_to_dict(loader.load_videomme_duration())
-
-    # MVBench sub-tasks
-    data['mvbench'] = _df_to_dict(loader.load_mvbench_tasks())
-
-    # VideoMME task types
-    data['vmmeTasktype'] = _df_to_dict(loader.load_videomme_tasktype())
-
-    # Video-Holmes question types
-    data['videoholmes'] = _df_to_dict(loader.load_videoholmes_types())
-
-    # PerceptionTest dims → {split: {model: {cat: val}}}
-    dims = loader.load_perception_dims()
-    data['perception'] = {s: _df_to_dict(df) for s, df in dims.items()}
-
-    # Charades metrics
-    data['charades'] = _df_to_dict(loader.load_charades_metrics())
-
-    # Evaluation completeness
-    data['completeness'] = loader.check_completeness()
-
-    return _sanitize(data)
-
-
-# ── Dashboard generation ─────────────────────────────────────────────────
-
-def generate_dashboard(loader, output_path):
-    """Generate a self-contained interactive HTML dashboard."""
-    data = export_data(loader)
-    data_json = json.dumps(data, ensure_ascii=False)
-    html = _TEMPLATE.replace('/**__DATA__**/', f'const DATA = {data_json};')
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(html)
-    print(f'  Dashboard saved: {output_path}')
-
-
-def serve(loader, port=8890):
-    """Serve the dashboard on localhost:port, regenerating HTML on each browser request."""
-    import http.server
-    import socketserver
-
-    class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            data = export_data(loader)
-            data_json = json.dumps(data, ensure_ascii=False)
-            html = _TEMPLATE.replace('/**__DATA__**/', f'const DATA = {data_json};')
-            content = html.encode('utf-8')
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.send_header('Content-Length', str(len(content)))
-            self.end_headers()
-            self.wfile.write(content)
-
-        def log_message(self, fmt, *args):
-            pass
-
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(('', port), _Handler) as httpd:
-        import socket
-        hostname = socket.gethostname()
-        print(f'  Listening on 0.0.0.0:{port}')
-        print(f'  Remote:  http://{hostname}:{port}/')
-        print(f'  Local:   http://localhost:{port}/')
-        print('  (or SSH tunnel: ssh -L {p}:localhost:{p} <server>)'.format(p=port))
-        print('  Press Ctrl+C to stop.')
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print('\n  Server stopped.')
-
-
-# ── CLI entry ────────────────────────────────────────────────────────────
-
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description='Generate interactive dashboard')
-    parser.add_argument('--work_dir', required=True)
-    parser.add_argument('-o', '--output', default='vis/output/dashboard.html')
-    parser.add_argument('--serve', action='store_true', help='Start HTTP server instead of writing file')
-    parser.add_argument('--port', type=int, default=8890)
-    args = parser.parse_args()
-
-    loader = ResultLoader(args.work_dir)
-    if args.serve:
-        serve(loader, port=args.port)
-    else:
-        os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
-        generate_dashboard(loader, args.output)
-
-
-# ── HTML template ────────────────────────────────────────────────────────
-
-_TEMPLATE = r'''<!DOCTYPE html>
-<html lang="zh">
+_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ablation Dashboard</title>
+<title>Eval Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <style>
-/* ── Reset & base ──────────────────────────────────────────────── */
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-     background:#f0f2f5;color:#1a1a2e;display:flex;height:100vh;overflow:hidden}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f5f6fa; color:#2c3e50; }
 
-/* ── Sidebar ───────────────────────────────────────────────────── */
-.sidebar{width:240px;min-width:240px;background:#fff;border-right:1px solid #e0e0e0;
-         display:flex;flex-direction:column;overflow:hidden}
-.sidebar-header{padding:16px 16px 12px;border-bottom:1px solid #eee;flex-shrink:0}
-.sidebar-header h1{font-size:15px;font-weight:700;color:#1a1a2e}
-.sidebar-header p{font-size:11px;color:#888;margin-top:2px}
-.model-panel{flex:1;overflow-y:auto;padding:8px 12px 16px}
-.group-header{display:flex;align-items:center;justify-content:space-between;
-              margin:12px 0 6px;padding:0 2px}
-.group-header:first-child{margin-top:4px}
-.group-title{font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.5px}
-.group-btns{display:flex;gap:4px}
-.group-btns button{font-size:10px;padding:1px 6px;border:1px solid #ddd;
-                   background:#fafafa;border-radius:3px;cursor:pointer;color:#666}
-.group-btns button:hover{background:#e8e8e8}
-.model-item{display:flex;align-items:center;padding:3px 4px;border-radius:4px;
-            cursor:pointer;margin:1px 0;transition:background .15s}
-.model-item:hover{background:#f5f5f5}
-.model-item input[type="checkbox"]{margin-right:7px;accent-color:var(--mc)}
-.model-item .dot{width:10px;height:10px;border-radius:50%;margin-right:6px;flex-shrink:0}
-.model-item label{font-size:12px;cursor:pointer;user-select:none;white-space:nowrap;
-                  overflow:hidden;text-overflow:ellipsis}
-.model-item.is-base label{font-weight:700}
-.sidebar-divider{height:1px;background:#e0e0e0;margin:0 12px}
-.bench-item{display:flex;align-items:center;padding:3px 4px;border-radius:4px;
-            cursor:pointer;margin:1px 0}
-.bench-item:hover{background:#f5f5f5}
-.bench-item input{margin-right:7px}
-.bench-item label{font-size:12px;cursor:pointer;user-select:none}
+.header { background:#2c3e50; color:#fff; padding:12px 24px; display:flex; align-items:center; gap:16px; }
+.header h1 { font-size:18px; font-weight:600; }
+.tabs { display:flex; gap:4px; }
+.tab { padding:6px 16px; border-radius:4px; cursor:pointer; font-size:13px; background:rgba(255,255,255,0.1); color:#ccc; }
+.tab.active { background:rgba(255,255,255,0.25); color:#fff; font-weight:600; }
 
-/* ── Main ──────────────────────────────────────────────────────── */
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.tab-bar{display:flex;gap:0;background:#fff;border-bottom:1px solid #e0e0e0;
-         padding:0 20px;flex-shrink:0}
-.tab-btn{padding:12px 20px;font-size:13px;font-weight:600;color:#888;cursor:pointer;
-         border:none;background:none;border-bottom:2px solid transparent;transition:all .2s}
-.tab-btn:hover{color:#333}
-.tab-btn.active{color:#1a73e8;border-bottom-color:#1a73e8}
-.content{flex:1;overflow-y:auto;padding:20px}
-.tab-panel{display:none}
-.tab-panel.active{display:block}
+.content { padding:16px 24px; }
 
-/* ── Cards & charts ────────────────────────────────────────────── */
-.card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);
-      padding:20px;margin-bottom:20px}
-.card-title{font-size:14px;font-weight:700;margin-bottom:14px;color:#1a1a2e}
-.chart-box{width:100%;min-height:400px}
-.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:20px}
-@media(max-width:1200px){.chart-row{grid-template-columns:1fr}}
+/* ── Table tab ── */
+.table-wrap { overflow-x:auto; }
+table.score-table { border-collapse:collapse; font-size:12px; width:100%; }
+table.score-table th, table.score-table td { padding:6px 10px; border:1px solid #ddd; text-align:center; white-space:nowrap; }
+table.score-table th { background:#34495e; color:#fff; cursor:pointer; user-select:none; position:sticky; top:0; z-index:1; }
+table.score-table th:hover { background:#4a6785; }
+table.score-table td.model-name { text-align:left; font-weight:500; background:#fafafa; position:sticky; left:0; z-index:0; }
+table.score-table tr:hover td { outline: 2px solid #3498db; }
 
-/* ── Score table ───────────────────────────────────────────────── */
-.score-table{width:100%;border-collapse:collapse;font-size:12px}
-.score-table th{position:sticky;top:0;background:#fafafa;padding:8px 10px;
-                text-align:center;font-weight:600;border-bottom:2px solid #e0e0e0;
-                cursor:pointer;user-select:none;white-space:nowrap}
-.score-table th:hover{background:#f0f0f0}
-.score-table th:first-child{text-align:left;cursor:default}
-.score-table th.sort-asc::after{content:" ▲";font-size:9px;color:#1a73e8}
-.score-table th.sort-desc::after{content:" ▼";font-size:9px;color:#1a73e8}
-.score-table td{padding:6px 10px;text-align:center;border-bottom:1px solid #f0f0f0;
-                font-variant-numeric:tabular-nums}
-.score-table td:first-child{text-align:left;font-weight:600;white-space:nowrap}
-.score-table td.cell{border-radius:3px}
-.score-table tr.base-row{background:#f8f9ff}
-.score-table td.avg-col{font-weight:700;border-left:2px solid #e0e0e0}
+/* ── Charts tab ── */
+.chart-layout { display:flex; gap:16px; min-height:calc(100vh - 120px); }
+.chart-sidebar { width:260px; flex-shrink:0; background:#fff; border-radius:8px; padding:12px; overflow-y:auto; max-height:calc(100vh - 120px); box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+.chart-main { flex:1; display:flex; flex-direction:column; gap:16px; }
+.chart-box { background:#fff; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); flex:1; min-height:400px; }
 
-/* ── Sub-tabs for breakdown ────────────────────────────────────── */
-.sub-tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
-.sub-tab{padding:6px 14px;font-size:12px;border:1px solid #ddd;border-radius:16px;
-         cursor:pointer;background:#fafafa;color:#555;transition:all .2s}
-.sub-tab:hover{border-color:#aaa}
-.sub-tab.active{background:#1a73e8;color:#fff;border-color:#1a73e8}
-.sub-panel{display:none}
-.sub-panel.active{display:block}
+.sidebar-section { margin-bottom:16px; }
+.sidebar-section h3 { font-size:13px; font-weight:600; margin-bottom:8px; color:#555; display:flex; align-items:center; justify-content:space-between; }
+.sidebar-section h3 .btn-group { display:flex; gap:4px; }
+.sidebar-section h3 .btn-group button { font-size:10px; padding:2px 6px; border:1px solid #ccc; border-radius:3px; background:#f9f9f9; cursor:pointer; }
+.sidebar-section h3 .btn-group button:hover { background:#eee; }
+.check-list { max-height:300px; overflow-y:auto; }
+.check-item { display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px; }
+.check-item input { margin:0; }
+.check-item .dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
 
-/* ── Completeness table ────────────────────────────────────────── */
-.comp-table{width:100%;border-collapse:collapse;font-size:12px}
-.comp-table th{position:sticky;top:0;background:#fafafa;padding:8px 10px;
-               text-align:center;font-weight:600;border-bottom:2px solid #e0e0e0;white-space:nowrap}
-.comp-table th:first-child{text-align:left}
-.comp-table td{padding:6px 10px;text-align:center;border-bottom:1px solid #f0f0f0}
-.comp-table td:first-child{text-align:left;font-weight:600;white-space:nowrap}
-.comp-table tr.incomplete-row{background:#fff8f8}
-.badge-done{display:inline-block;width:18px;height:18px;line-height:18px;border-radius:50%;
-            background:#27ae60;color:#fff;font-size:11px;font-weight:700;text-align:center}
-.badge-miss{display:inline-block;width:18px;height:18px;line-height:18px;border-radius:50%;
-            background:#e74c3c;color:#fff;font-size:11px;font-weight:700;text-align:center}
-.pct-bar-wrap{display:inline-flex;align-items:center;gap:6px;min-width:100px}
-.pct-bar{height:8px;border-radius:4px;background:#eee;flex:1;min-width:60px;overflow:hidden}
-.pct-bar-fill{height:100%;border-radius:4px;transition:width .3s}
-.warn-badge{display:inline-block;background:#e67e22;color:#fff;border-radius:3px;
-            font-size:10px;padding:1px 5px;margin-left:4px;vertical-align:middle}
-
-/* ── Misc ──────────────────────────────────────────────────────── */
-.empty-msg{text-align:center;color:#999;padding:60px 20px;font-size:14px}
-.toolbar{display:flex;align-items:center;gap:10px;padding:10px 20px 0;flex-shrink:0}
-.toolbar label{font-size:12px;font-weight:600;color:#555;white-space:nowrap}
-.toolbar input[type=range]{flex:1;max-width:180px;accent-color:#1a73e8}
-.toolbar span{font-size:11px;color:#888;white-space:nowrap}
+.chart-type-bar { display:flex; gap:4px; margin-bottom:12px; }
+.chart-type-btn { padding:4px 12px; border:1px solid #ccc; border-radius:4px; cursor:pointer; font-size:12px; background:#f9f9f9; }
+.chart-type-btn.active { background:#3498db; color:#fff; border-color:#3498db; }
 </style>
 </head>
 <body>
 
-<!-- Sidebar -->
-<div class="sidebar">
-  <div class="sidebar-header">
-    <h1>Model Selection</h1>
-    <p>Toggle models to compare</p>
+<div class="header">
+  <h1>Eval Dashboard</h1>
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('table')">Score Table</div>
+    <div class="tab" onclick="switchTab('charts')">Charts</div>
   </div>
-  <div class="model-panel" id="modelPanel"></div>
-  <div class="sidebar-divider"></div>
-  <div class="sidebar-header" style="border-bottom:none;padding:12px 16px 4px">
-    <h1>Benchmarks</h1>
-  </div>
-  <div class="model-panel" id="benchPanel"
-       style="flex:0 0 auto;max-height:220px;overflow-y:auto"></div>
 </div>
 
-<!-- Main -->
-<div class="main">
-  <div class="tab-bar" id="tabBar">
-    <button class="tab-btn active" data-tab="overview">Overview</button>
-    <button class="tab-btn" data-tab="radar">Radar</button>
-    <button class="tab-btn" data-tab="delta">Delta</button>
-    <button class="tab-btn" data-tab="breakdown">Breakdown</button>
-    <button class="tab-btn" data-tab="completeness">Completeness ⚠</button>
+<div class="content">
+  <div id="tab-table">
+    <div class="table-wrap" id="score-table-wrap"></div>
   </div>
-  <div class="content" id="content">
-    <!-- Overview -->
-    <div class="tab-panel active" id="tab-overview">
-      <div class="card">
-        <div class="card-title">Score Heatmap (models × benchmarks)</div>
-        <div id="scoreTableWrap" style="overflow-x:auto"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Average Score Ranking</div>
-        <div class="chart-box" id="chartRanking"></div>
-      </div>
-    </div>
-
-    <!-- Radar -->
-    <div class="tab-panel" id="tab-radar">
-      <div class="card" style="margin-bottom:14px;padding:12px 20px">
-        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-          <span style="font-size:12px;font-weight:700;color:#555">Radar Sensitivity</span>
-          <span style="font-size:11px;color:#bbb">Zoom out</span>
-          <input type="range" id="radarSens" min="1" max="20" value="10"
-                 style="flex:1;min-width:120px;max-width:240px;accent-color:#1a73e8"
-                 oninput="onRadarSens(this.value)">
-          <span style="font-size:11px;color:#bbb">Zoom in</span>
-          <span id="radarSensVal" style="font-size:12px;color:#1a73e8;font-weight:600;
-                min-width:70px">pad ×0.30</span>
+  <div id="tab-charts" style="display:none">
+    <div class="chart-layout">
+      <div class="chart-sidebar">
+        <div class="sidebar-section">
+          <h3>Models <span class="btn-group"><button onclick="toggleAll('model',true)">All</button><button onclick="toggleAll('model',false)">None</button></span></h3>
+          <div class="check-list" id="model-checks"></div>
+        </div>
+        <div class="sidebar-section">
+          <h3>Benchmarks <span class="btn-group"><button onclick="toggleAll('bench',true)">All</button><button onclick="toggleAll('bench',false)">None</button></span></h3>
+          <div class="check-list" id="bench-checks"></div>
         </div>
       </div>
-      <div class="chart-row">
-        <div class="card">
-          <div class="card-title">AoT Ablation Radar (adaptive scale)</div>
-          <div class="chart-box" id="chartRadarAot" style="min-height:500px"></div>
+      <div class="chart-main">
+        <div class="chart-type-bar">
+          <div class="chart-type-btn active" onclick="switchChartType('radar')">Radar</div>
+          <div class="chart-type-btn" onclick="switchChartType('bar')">Bar</div>
         </div>
-        <div class="card">
-          <div class="card-title">TG Ablation Radar (adaptive scale)</div>
-          <div class="chart-box" id="chartRadarTg" style="min-height:500px"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Delta -->
-    <div class="tab-panel" id="tab-delta">
-      <div class="card">
-        <div class="card-title">Per-Benchmark Delta vs Base</div>
-        <div class="chart-box" id="chartDelta" style="min-height:500px"></div>
-      </div>
-    </div>
-
-    <!-- Breakdown -->
-    <div class="tab-panel" id="tab-breakdown">
-      <div class="sub-tabs" id="breakdownTabs">
-        <button class="sub-tab active" data-sub="mvbench">MVBench</button>
-        <button class="sub-tab" data-sub="vmme">VideoMME</button>
-        <button class="sub-tab" data-sub="videoholmes">Video-Holmes</button>
-        <button class="sub-tab" data-sub="perception">PerceptionTest</button>
-        <button class="sub-tab" data-sub="charades">Charades</button>
-      </div>
-      <div class="sub-panel active" id="sub-mvbench">
-        <div class="card">
-          <div class="card-title">MVBench Sub-task Breakdown</div>
-          <div class="chart-box" id="chartMvbench" style="min-height:500px"></div>
-        </div>
-      </div>
-      <div class="sub-panel" id="sub-vmme">
-        <div class="chart-row">
-          <div class="card">
-            <div class="card-title">VideoMME Duration</div>
-            <div class="chart-box" id="chartVmmeDur"></div>
-          </div>
-          <div class="card">
-            <div class="card-title">VideoMME Task Type</div>
-            <div class="chart-box" id="chartVmmeTask"></div>
-          </div>
-        </div>
-      </div>
-      <div class="sub-panel" id="sub-videoholmes">
-        <div class="card">
-          <div class="card-title">Video-Holmes Question Type Breakdown</div>
-          <div class="chart-box" id="chartHolmes" style="min-height:450px"></div>
-        </div>
-      </div>
-      <div class="sub-panel" id="sub-perception">
-        <div class="card">
-          <div class="card-title">PerceptionTest Dimension Breakdown</div>
-          <div class="chart-box" id="chartPerception" style="min-height:500px"></div>
-        </div>
-      </div>
-      <div class="sub-panel" id="sub-charades">
-        <div class="card">
-          <div class="card-title">CharadesTimeLens Metrics</div>
-          <div class="chart-box" id="chartCharades" style="min-height:450px"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Completeness -->
-    <div class="tab-panel" id="tab-completeness">
-      <div class="card">
-        <div class="card-title">评测完整性检查 · Evaluation Completeness</div>
-        <p style="font-size:12px;color:#888;margin-bottom:12px">
-          绿色 ✓ 表示已找到评测文件；红色 ✗ 表示缺失。带
-          <span class="warn-badge">未完整</span> 标记的模型评测尚未完成。
-        </p>
-        <div id="compTableWrap" style="overflow-x:auto"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">完整度概览 · Completeness Overview</div>
-        <div class="chart-box" id="chartCompleteness" style="min-height:400px"></div>
+        <div class="chart-box" id="chart-container"></div>
       </div>
     </div>
   </div>
 </div>
 
 <script>
-/**__DATA__**/
+const DATA = /**__DATA__**/;
 
-// ══════════════════════════════════════════════════════════════════════════
-// State
-// ══════════════════════════════════════════════════════════════════════════
-// selected stores model *keys* (directory names) — unique and safe as DOM ids
-const selected = new Set(DATA.models.map(m => m.key));
-const selectedBench = new Set(DATA.benchmarks);
-let radarPadFactor = 0.3;  // slider-controlled; smaller = more zoom
-let activeTab = 'overview';
-let activeSub = 'mvbench';
-const charts = {};  // id → ECharts instance
+const models = DATA.models;
+const benchmarks = DATA.benchmarks;
+const scores = DATA.scores;
 
-// ══════════════════════════════════════════════════════════════════════════
-// Helpers
-// ══════════════════════════════════════════════════════════════════════════
-function getSelectedKeys() {
-  return DATA.models.filter(m => selected.has(m.key)).map(m => m.key);
-}
-// Returns display labels of selected models (used for data lookup in DATA.overall etc.)
-function getSelectedLabels() {
-  return DATA.models.filter(m => selected.has(m.key)).map(m => m.label);
-}
-function getSelectedBenchmarks() {
-  return DATA.benchmarks.filter(b => selectedBench.has(b));
-}
-function modelByLabel(label) {
-  return DATA.models.find(m => m.label === label);
-}
-function vals(obj) { return obj ? Object.values(obj) : []; }
-function keys(obj) { return obj ? Object.keys(obj) : []; }
-function validNum(v) { return v !== null && v !== undefined && !isNaN(v); }
+let activeTab = 'table';
+let chartType = 'radar';
+let selectedModels = new Set(models.map(m => m.key));
+let selectedBench = new Set(benchmarks);
+let chartInstance = null;
+let sortCol = null;
+let sortAsc = true;
 
-// Color interpolation for heatmap cells
-function heatColor(val, lo, hi) {
-  if (!validNum(val)) return 'transparent';
-  const t = hi > lo ? (val - lo) / (hi - lo) : 0.5;
-  // green(good) → yellow → red(bad) reversed: low=red, high=green
-  const r = t < 0.5 ? 255 : Math.round(255 * (1 - t) * 2);
-  const g = t > 0.5 ? 200 : Math.round(200 * t * 2);
-  const b = 60;
-  return `rgba(${r},${g},${b},0.18)`;
+// ── Tab switching ──
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
+  document.getElementById('tab-table').style.display = tab === 'table' ? '' : 'none';
+  document.getElementById('tab-charts').style.display = tab === 'charts' ? '' : 'none';
+  if (tab === 'charts') updateChart();
 }
 
-function ensureChart(id) {
-  const dom = document.getElementById(id);
-  if (!dom) return null;
-  if (charts[id]) {
-    charts[id].resize();
-    return charts[id];
-  }
-  const c = echarts.init(dom);
-  charts[id] = c;
-  return c;
-}
-
-function disposeChart(id) {
-  if (charts[id]) { charts[id].dispose(); delete charts[id]; }
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// Sidebar: model panel
-// ══════════════════════════════════════════════════════════════════════════
-function buildModelPanel() {
-  const panel = document.getElementById('modelPanel');
-  const groups = {};
-  DATA.models.forEach(m => {
-    (groups[m.group] = groups[m.group] || []).push(m);
-  });
-  const groupNames = {'base': 'Base', 'aot': 'AoT Ablation', 'tg': 'TG Ablation', 'extra': 'Auto-discovered'};
-  let html = '';
-  for (const [g, label] of Object.entries(groupNames)) {
-    const models = groups[g] || [];
-    if (!models.length) continue;
-    html += `<div class="group-header">
-      <span class="group-title">${label}</span>
-      <span class="group-btns">
-        <button onclick="toggleGroup('${g}',true)">All</button>
-        <button onclick="toggleGroup('${g}',false)">None</button>
-      </span>
-    </div>`;
-    models.forEach(m => {
-      // Use m.key as checkbox id — unique, no special chars, matches selected Set
-      const safeId = 'cb-' + m.key.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const cls = m.isBase ? 'model-item is-base' : 'model-item';
-      html += `<div class="${cls}" style="--mc:${m.color}">
-        <input type="checkbox" id="${safeId}" checked
-               onchange="onModelToggle('${m.key}', this.checked)">
-        <span class="dot" style="background:${m.color}"></span>
-        <label for="${safeId}" title="${m.key}">${m.label}</label>
-      </div>`;
-    });
-  }
-  panel.innerHTML = html;
-}
-
-window.toggleGroup = function(group, on) {
-  DATA.models.filter(m => m.group === group).forEach(m => {
-    const safeId = 'cb-' + m.key.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const cb = document.getElementById(safeId);
-    if (cb) { cb.checked = on; }
-    if (on) selected.add(m.key); else selected.delete(m.key);
-  });
-  updateCharts();
-};
-
-// key = model directory key (not label)
-window.onModelToggle = function(key, checked) {
-  if (checked) selected.add(key); else selected.delete(key);
-  updateCharts();
-};
-
-// ══════════════════════════════════════════════════════════════════════════
-// Sidebar: benchmark panel
-// ══════════════════════════════════════════════════════════════════════════
-function buildBenchmarkPanel() {
-  const panel = document.getElementById('benchPanel');
-  let html = '<div class="group-header">' +
-    '<span class="group-btns">' +
-    '<button onclick="toggleAllBench(true)">All</button>' +
-    '<button onclick="toggleAllBench(false)">None</button>' +
-    '</span></div>';
-  DATA.benchmarks.forEach(b => {
-    html += `<div class="bench-item">` +
-      `<input type="checkbox" id="bcb-${b}" checked ` +
-      `onchange="onBenchToggle('${b}',this.checked)">` +
-      `<label for="bcb-${b}">${b}</label></div>`;
-  });
-  panel.innerHTML = html;
-}
-
-window.toggleAllBench = function(on) {
-  DATA.benchmarks.forEach(b => {
-    const cb = document.getElementById('bcb-' + b);
-    if (cb) cb.checked = on;
-    if (on) selectedBench.add(b); else selectedBench.delete(b);
-  });
-  updateCharts();
-};
-
-window.onBenchToggle = function(b, checked) {
-  if (checked) selectedBench.add(b); else selectedBench.delete(b);
-  updateCharts();
-};
-
-// Logarithmic sensitivity mapping: slider 1→20 maps factor 2.0→0.05
-function sliderToFactor(v) {
-  return 2.0 * Math.pow(0.025, (v - 1) / 19);
-}
-
-window.onRadarSens = function(v) {
-  radarPadFactor = sliderToFactor(+v);
-  document.getElementById('radarSensVal').textContent =
-    'pad ×' + radarPadFactor.toFixed(2);
-  renderAotRadar();
-  renderTgRadar();
-};
-
-// ══════════════════════════════════════════════════════════════════════════
-// Tabs
-// ══════════════════════════════════════════════════════════════════════════
-function setupTabs() {
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      const tab = btn.dataset.tab;
-      document.getElementById('tab-' + tab).classList.add('active');
-      activeTab = tab;
-      updateCharts();
-    });
-  });
-  document.querySelectorAll('.sub-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.sub-panel').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('sub-' + btn.dataset.sub).classList.add('active');
-      activeSub = btn.dataset.sub;
-      updateCharts();
-    });
-  });
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// Update orchestrator
-// ══════════════════════════════════════════════════════════════════════════
-function updateCharts() {
-  switch (activeTab) {
-    case 'overview': renderScoreTable(); renderRanking(); break;
-    case 'radar': renderAotRadar(); renderTgRadar(); break;
-    case 'delta': renderDeltaBar(); break;
-    case 'completeness': renderCompletenessTable(); renderCompletenessChart(); break;
-    case 'breakdown':
-      switch (activeSub) {
-        case 'mvbench': renderGroupedBar('chartMvbench', DATA.mvbench, 'MVBench Sub-tasks'); break;
-        case 'vmme': renderGroupedBar('chartVmmeDur', DATA.vmmeDuration, 'Duration');
-                     renderGroupedBar('chartVmmeTask', DATA.vmmeTasktype, 'Task Type'); break;
-        case 'videoholmes': renderGroupedBar('chartHolmes', DATA.videoholmes, 'Question Type'); break;
-        case 'perception': renderPerception(); break;
-        case 'charades': renderGroupedBar('chartCharades', DATA.charades, 'Metrics'); break;
-      }
-      break;
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// Chart: Score Table (Overview)
-// ══════════════════════════════════════════════════════════════════════════
-let tableSortCol = 'avg';
-let tableSortAsc = false;
-
-function renderScoreTable() {
-  const wrap = document.getElementById('scoreTableWrap');
-  const labels = getSelectedLabels();
-  const benchmarks = getSelectedBenchmarks();
-  if (!labels.length) { wrap.innerHTML = '<p class="empty-msg">Select at least one model</p>'; return; }
-
-  // Compute data rows
-  const rows = labels.map(label => {
-    const d = DATA.overall[label] || {};
-    const scores = benchmarks.map(b => d[b] ?? null);
-    const valid = scores.filter(validNum);
-    const avg = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : null;
-    return { label, scores, avg };
-  });
+// ── Score table ──
+function renderTable() {
+  let modelKeys = models.map(m => m.key);
 
   // Sort
-  if (tableSortCol === 'avg') {
-    rows.sort((a, b) => {
-      const va = a.avg ?? -Infinity, vb = b.avg ?? -Infinity;
-      return tableSortAsc ? va - vb : vb - va;
-    });
-  } else if (tableSortCol === 'model') {
-    rows.sort((a, b) => tableSortAsc ? a.label.localeCompare(b.label) : b.label.localeCompare(a.label));
-  } else {
-    const ci = benchmarks.indexOf(tableSortCol);
-    rows.sort((a, b) => {
-      const va = a.scores[ci] ?? -Infinity, vb = b.scores[ci] ?? -Infinity;
-      return tableSortAsc ? va - vb : vb - va;
+  if (sortCol !== null) {
+    modelKeys.sort((a, b) => {
+      let va = scores[a]?.[sortCol], vb = scores[b]?.[sortCol];
+      if (va == null) va = -Infinity;
+      if (vb == null) vb = -Infinity;
+      return sortAsc ? va - vb : vb - va;
     });
   }
 
-  // Column ranges for heatmap
-  const colRanges = benchmarks.map((_, ci) => {
-    const vs = rows.map(r => r.scores[ci]).filter(validNum);
-    return vs.length ? [Math.min(...vs), Math.max(...vs)] : [0, 100];
-  });
-  const avgVs = rows.map(r => r.avg).filter(validNum);
-  const avgRange = avgVs.length ? [Math.min(...avgVs), Math.max(...avgVs)] : [0, 100];
-
-  // Build HTML
-  const sortCls = (col) => {
-    if (tableSortCol !== col) return '';
-    return tableSortAsc ? 'sort-asc' : 'sort-desc';
-  };
-  let html = '<table class="score-table"><thead><tr>';
-  html += `<th class="${sortCls('model')}" onclick="sortTable('model')">Model</th>`;
+  // Compute per-column min/max for coloring
+  const colMin = {}, colMax = {};
   benchmarks.forEach(b => {
-    html += `<th class="${sortCls(b)}" onclick="sortTable('${b}')">${b}</th>`;
+    let vals = modelKeys.map(m => scores[m]?.[b]).filter(v => v != null);
+    colMin[b] = vals.length ? Math.min(...vals) : 0;
+    colMax[b] = vals.length ? Math.max(...vals) : 100;
   });
-  html += `<th class="${sortCls('avg')}" onclick="sortTable('avg')">Avg</th>`;
+
+  let html = '<table class="score-table"><thead><tr><th>Model</th>';
+  benchmarks.forEach(b => {
+    const arrow = sortCol === b ? (sortAsc ? ' ▲' : ' ▼') : '';
+    html += `<th onclick="sortTable('${b.replace(/'/g, "\\'")}')">${b}${arrow}</th>`;
+  });
+  html += '<th onclick="sortTable(\'__avg__\')">Avg' + (sortCol === '__avg__' ? (sortAsc ? ' ▲' : ' ▼') : '') + '</th>';
   html += '</tr></thead><tbody>';
-  rows.forEach(r => {
-    const m = modelByLabel(r.label);
-    const isBase = m && m.isBase;
-    html += `<tr class="${isBase ? 'base-row' : ''}">`;
-    const c = m ? m.color : '#888';
-    html += `<td><span class="dot" style="display:inline-block;width:8px;height:8px;` +
-      `border-radius:50%;background:${c};margin-right:5px;vertical-align:middle">` +
-      `</span>${r.label}</td>`;
-    r.scores.forEach((s, ci) => {
-      const bg = heatColor(s, colRanges[ci][0], colRanges[ci][1]);
-      html += `<td class="cell" style="background:${bg}">${validNum(s) ? s.toFixed(1) : '—'}</td>`;
+
+  modelKeys.forEach(m => {
+    html += '<tr>';
+    html += `<td class="model-name">${m}</td>`;
+    let sum = 0, cnt = 0;
+    benchmarks.forEach(b => {
+      const v = scores[m]?.[b];
+      if (v != null) {
+        const range = colMax[b] - colMin[b];
+        const ratio = range > 0 ? (v - colMin[b]) / range : 0.5;
+        const bg = heatColor(ratio);
+        html += `<td style="background:${bg}">${v.toFixed(1)}</td>`;
+        sum += v; cnt++;
+      } else {
+        html += '<td style="color:#ccc">—</td>';
+      }
     });
-    const avgBg = heatColor(r.avg, avgRange[0], avgRange[1]);
-    html += `<td class="avg-col cell" style="background:${avgBg}">${validNum(r.avg) ? r.avg.toFixed(1) : '—'}</td>`;
+    const avg = cnt > 0 ? (sum / cnt).toFixed(1) : '—';
+    html += `<td style="font-weight:600">${avg}</td>`;
     html += '</tr>';
   });
+
   html += '</tbody></table>';
-  wrap.innerHTML = html;
+  document.getElementById('score-table-wrap').innerHTML = html;
 }
 
-window.sortTable = function(col) {
-  if (tableSortCol === col) tableSortAsc = !tableSortAsc;
-  else { tableSortCol = col; tableSortAsc = false; }
-  renderScoreTable();
-};
-
-// ══════════════════════════════════════════════════════════════════════════
-// Chart: Ranking Bar (Overview)
-// ══════════════════════════════════════════════════════════════════════════
-function renderRanking() {
-  const chart = ensureChart('chartRanking');
-  if (!chart) return;
-  const labels = getSelectedLabels();
-  const benchmarks = getSelectedBenchmarks();
-
-  // Compute averages
-  const items = labels.map(label => {
-    const d = DATA.overall[label] || {};
-    const vs = benchmarks.map(b => d[b]).filter(validNum);
-    return { label, avg: vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : null,
-             scores: benchmarks.map(b => d[b]) };
-  }).filter(i => validNum(i.avg)).sort((a, b) => a.avg - b.avg);
-
-  if (!items.length) { chart.clear(); return; }
-
-  // Scatter series for individual benchmarks
-  const scatterSeries = benchmarks.map((b, bi) => ({
-    type: 'scatter',
-    name: b,
-    data: items.map((it, yi) => {
-      const v = it.scores[bi];
-      return validNum(v) ? [v, yi] : null;
-    }).filter(Boolean),
-    symbolSize: 8,
-    itemStyle: { opacity: 0.7 },
-    z: 10,
-  }));
-
-  chart.setOption({
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-      formatter: params => {
-        let tip = `<b>${items[params[0].dataIndex]?.label || ''}</b><br>`;
-        params.forEach(p => {
-          if (p.seriesType === 'bar') tip += `Avg: <b>${p.value.toFixed(1)}</b><br>`;
-          else tip += `${p.seriesName}: ${p.value[0].toFixed(1)}<br>`;
-        });
-        return tip;
-      }
-    },
-    legend: { show: true, top: 0, type: 'scroll', textStyle: { fontSize: 10 } },
-    grid: { left: 100, right: 40, top: 40, bottom: 20 },
-    xAxis: { type: 'value', name: 'Score' },
-    yAxis: {
-      type: 'category',
-      data: items.map(i => i.label),
-      axisLabel: { fontSize: 11 },
-    },
-    series: [
-      {
-        type: 'bar',
-        name: 'Average',
-        data: items.map(i => i.avg),
-        barWidth: '50%',
-        itemStyle: {
-          color: params => {
-            const m = modelByLabel(items[params.dataIndex]?.label);
-            return m ? m.color : '#888';
-          }
-        },
-        label: { show: true, position: 'right', fontSize: 11,
-                 formatter: p => p.value.toFixed(1) },
-        z: 5,
-      },
-      ...scatterSeries,
-    ],
-  }, true);
+function heatColor(ratio) {
+  // Green (high) to Red (low)
+  const r = Math.round(255 * (1 - ratio) * 0.8 + 240 * 0.2);
+  const g = Math.round(255 * ratio * 0.7 + 240 * 0.3);
+  const b = Math.round(240 * 0.3);
+  return `rgb(${r},${g},${b})`;
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// Chart: Radar
-// ══════════════════════════════════════════════════════════════════════════
-function renderRadar_(chartId, groupFilter) {
-  const chart = ensureChart(chartId);
-  if (!chart) return;
-  const benchmarks = getSelectedBenchmarks();
+function sortTable(col) {
+  if (sortCol === col) {
+    sortAsc = !sortAsc;
+  } else {
+    sortCol = col;
+    sortAsc = false;  // default descending for scores
+  }
+  // Handle avg column sorting
+  if (col === '__avg__') {
+    const avgScores = {};
+    models.forEach(m => {
+      let s = 0, c = 0;
+      benchmarks.forEach(b => { const v = scores[m.key]?.[b]; if (v != null) { s += v; c++; } });
+      avgScores[m.key] = c > 0 ? s / c : -Infinity;
+    });
+    models.sort((a, b) => sortAsc ? avgScores[a.key] - avgScores[b.key] : avgScores[b.key] - avgScores[a.key]);
+  }
+  renderTable();
+}
 
-  // Filter to relevant models (base + matching group)
-  const relevant = DATA.models.filter(m =>
-    (m.isBase || m.group === groupFilter) && selected.has(m.key)
-  );
-  if (relevant.length < 2 || !benchmarks.length) {
-    chart.clear();
-    chart.setOption({ title: { text: 'Select at least 2 models', left: 'center', top: 'center',
-                               textStyle: { color: '#999', fontSize: 14 } } });
+// ── Sidebar checkboxes ──
+function initSidebar() {
+  let mhtml = '';
+  models.forEach(m => {
+    mhtml += `<label class="check-item">
+      <input type="checkbox" checked onchange="toggleModel('${m.key.replace(/'/g, "\\'")}')" data-group="model" data-key="${m.key}">
+      <span class="dot" style="background:${m.color}"></span>
+      <span>${m.key}</span>
+    </label>`;
+  });
+  document.getElementById('model-checks').innerHTML = mhtml;
+
+  let bhtml = '';
+  benchmarks.forEach(b => {
+    bhtml += `<label class="check-item">
+      <input type="checkbox" checked onchange="toggleBench('${b.replace(/'/g, "\\'")}')" data-group="bench" data-key="${b}">
+      <span>${b}</span>
+    </label>`;
+  });
+  document.getElementById('bench-checks').innerHTML = bhtml;
+}
+
+function toggleModel(key) {
+  if (selectedModels.has(key)) selectedModels.delete(key); else selectedModels.add(key);
+  updateChart();
+}
+function toggleBench(key) {
+  if (selectedBench.has(key)) selectedBench.delete(key); else selectedBench.add(key);
+  updateChart();
+}
+function toggleAll(group, state) {
+  document.querySelectorAll(`input[data-group="${group}"]`).forEach(cb => {
+    cb.checked = state;
+    const key = cb.dataset.key;
+    if (group === 'model') { state ? selectedModels.add(key) : selectedModels.delete(key); }
+    else { state ? selectedBench.add(key) : selectedBench.delete(key); }
+  });
+  updateChart();
+}
+
+// ── Chart type switching ──
+function switchChartType(type) {
+  chartType = type;
+  document.querySelectorAll('.chart-type-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.chart-type-btn[onclick="switchChartType('${type}')"]`).classList.add('active');
+  updateChart();
+}
+
+// ── Chart rendering ──
+function updateChart() {
+  const container = document.getElementById('chart-container');
+  if (!chartInstance) chartInstance = echarts.init(container);
+  chartInstance.clear();
+  chartInstance.resize();
+
+  const selModels = models.filter(m => selectedModels.has(m.key));
+  const selBench = benchmarks.filter(b => selectedBench.has(b));
+  if (!selModels.length || !selBench.length) {
+    chartInstance.setOption({ title: { text: 'Select models and benchmarks', left: 'center', top: 'center' } });
     return;
   }
 
-  // Gather raw scores
-  const rawScores = {};
-  relevant.forEach(m => {
-    const d = DATA.overall[m.label] || {};
-    rawScores[m.label] = benchmarks.map(b => d[b] ?? null);
+  if (chartType === 'radar') renderRadar(selModels, selBench);
+  else renderBar(selModels, selBench);
+}
+
+function renderRadar(selModels, selBench) {
+  // Per-axis ranges with 10% padding
+  const indicators = selBench.map(b => {
+    let vals = selModels.map(m => scores[m.key]?.[b]).filter(v => v != null);
+    let min = vals.length ? Math.min(...vals) : 0;
+    let max = vals.length ? Math.max(...vals) : 100;
+    let pad = (max - min) * 0.1 || 5;
+    return { name: b, min: Math.max(0, Math.floor(min - pad)), max: Math.ceil(max + pad) };
   });
 
-  // Adaptive per-axis range driven by radarPadFactor (slider-controlled)
-  // factor=0.3 (slider mid): 0.2pp spread → ~2pp window; factor=0.05 (full zoom): ~0.3pp window
-  const ranges = benchmarks.map((b, i) => {
-    const vs = relevant.map(m => rawScores[m.label][i]).filter(validNum);
-    if (!vs.length) return [0, 100];
-    const lo = Math.min(...vs), hi = Math.max(...vs);
-    const pad = Math.max(radarPadFactor * 1.5, (hi - lo) * radarPadFactor);
-    let mn = Math.max(0, lo - pad), mx = Math.min(100, hi + pad);
-    const minSpan = Math.max(0.3, radarPadFactor * 6);
-    if (mx - mn < minSpan) {
-      const mid = (mn + mx) / 2;
-      mn = Math.max(0, mid - minSpan / 2);
-      mx = Math.min(100, mid + minSpan / 2);
-    }
-    return [mn, mx];
+  const series = [{
+    type: 'radar',
+    data: selModels.map(m => ({
+      name: m.key,
+      value: selBench.map(b => scores[m.key]?.[b] ?? 0),
+      lineStyle: { width: 2 },
+      areaStyle: { opacity: 0.1 },
+      itemStyle: { color: m.color },
+    }))
+  }];
+
+  chartInstance.setOption({
+    tooltip: { trigger: 'item' },
+    legend: { data: selModels.map(m => m.key), bottom: 0, type: 'scroll', textStyle: { fontSize: 11 } },
+    radar: { indicator: indicators, radius: '60%', nameGap: 8, axisName: { fontSize: 11 } },
+    series: series,
   });
+}
 
-  const indicator = benchmarks.map((b, i) => ({
-    name: `${b}\n(${ranges[i][0].toFixed(1)}~${ranges[i][1].toFixed(1)})`,
-    min: ranges[i][0], max: ranges[i][1],
-  }));
-
-  const series = relevant.map(m => ({
-    value: rawScores[m.label].map((v, i) => validNum(v) ? v : ranges[i][0]),
-    name: m.label,
-    lineStyle: m.isBase ? { type: 'dashed', width: 3 } : { width: 2 },
-    areaStyle: { opacity: 0.05 },
+function renderBar(selModels, selBench) {
+  const series = selModels.map(m => ({
+    name: m.key,
+    type: 'bar',
+    data: selBench.map(b => scores[m.key]?.[b] ?? 0),
     itemStyle: { color: m.color },
-    symbol: 'circle',
-    symbolSize: 4,
   }));
 
-  chart.setOption({
-    tooltip: {
-      trigger: 'item',
-      formatter: params => {
-        if (!params.value) return '';
-        let tip = `<b>${params.name}</b><br>`;
-        benchmarks.forEach((b, i) => {
-          const raw = rawScores[params.name]?.[i];
-          tip += `${b}: ${validNum(raw) ? raw.toFixed(1) : '—'}<br>`;
-        });
-        return tip;
-      }
-    },
-    legend: { data: relevant.map(m => m.label), top: 0, type: 'scroll',
-              textStyle: { fontSize: 10 } },
-    radar: { indicator, radius: '65%', center: ['50%', '55%'],
-             axisName: { fontSize: 10, color: '#555' },
-             splitArea: { areaStyle: { color: ['#fff', '#f9f9f9'] } } },
-    series: [{ type: 'radar', data: series }],
-  }, true);
+  chartInstance.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    legend: { data: selModels.map(m => m.key), bottom: 0, type: 'scroll', textStyle: { fontSize: 11 } },
+    grid: { left: 60, right: 20, top: 20, bottom: 60 },
+    xAxis: { type: 'category', data: selBench, axisLabel: { rotate: 30, fontSize: 11 } },
+    yAxis: { type: 'value', name: 'Score' },
+    series: series,
+  });
 }
 
-function renderAotRadar() { renderRadar_('chartRadarAot', 'aot'); }
-function renderTgRadar() { renderRadar_('chartRadarTg', 'tg'); }
-
-// ══════════════════════════════════════════════════════════════════════════
-// Chart: Delta Heatmap  (rows=models, cols=benchmarks, cell=Δ vs base)
-// Green = improvement, Red = regression — mirrors the static PNG output
-// ══════════════════════════════════════════════════════════════════════════
-function renderDeltaBar() {
-  const chart = ensureChart('chartDelta');
-  if (!chart) return;
-  const benchmarks = getSelectedBenchmarks();
-  const baseData = DATA.overall[DATA.baseLabel] || {};
-
-  // Only non-base selected models
-  const models = DATA.models.filter(m => !m.isBase && selected.has(m.key));
-  if (!models.length || !benchmarks.length) {
-    chart.clear();
-    chart.setOption({ title: { text: 'Select ablation models to compare', left: 'center',
-                               top: 'center', textStyle: { color: '#999', fontSize: 14 } } });
-    return;
-  }
-
-  // Build flat heatmap data: [col_idx, row_idx, value]
-  const heatData = [];
-  let vmax = 0.5;
-  models.forEach((m, ri) => {
-    benchmarks.forEach((b, ci) => {
-      const base = baseData[b];
-      const cur = (DATA.overall[m.label] || {})[b];
-      if (validNum(base) && validNum(cur)) {
-        const delta = Math.round((cur - base) * 100) / 100;
-        heatData.push([ci, ri, delta]);
-        if (Math.abs(delta) > vmax) vmax = Math.abs(delta);
-      } else {
-        heatData.push([ci, ri, null]);
-      }
-    });
-  });
-  vmax = Math.ceil(vmax * 10) / 10;  // round up to 1dp
-
-  const rowH = Math.max(36, Math.min(64, Math.floor(380 / Math.max(models.length, 1))));
-  const chartH = Math.max(260, models.length * rowH + 120);
-  document.getElementById('chartDelta').style.minHeight = chartH + 'px';
-  chart.resize();
-
-  chart.setOption({
-    tooltip: {
-      trigger: 'item',
-      formatter: p => {
-        const b = benchmarks[p.value[0]];
-        const m = models[p.value[1]];
-        const d = p.value[2];
-        const base = baseData[b];
-        const cur = (DATA.overall[m?.label] || {})[b];
-        const sign = d >= 0 ? '+' : '';
-        return `<b>${m?.label}</b><br>${b}: ${validNum(base) ? base.toFixed(1) : '—'}` +
-               ` → ${validNum(cur) ? cur.toFixed(1) : '—'}` +
-               `<br>Δ = <b>${sign}${validNum(d) ? d.toFixed(1) : '—'}</b>`;
-      }
-    },
-    grid: { left: 110, right: 120, top: 70, bottom: 60 },
-    xAxis: {
-      type: 'category', data: benchmarks,
-      position: 'top',
-      axisLabel: { rotate: 20, fontSize: 11, fontWeight: 600 },
-      splitArea: { show: true },
-    },
-    yAxis: {
-      type: 'category', data: models.map(m => m.label),
-      axisLabel: { fontSize: 11 },
-      splitArea: { show: true },
-    },
-    visualMap: {
-      type: 'continuous',
-      min: -vmax, max: vmax,
-      calculable: true,
-      orient: 'vertical',
-      right: 10, top: 'center',
-      textStyle: { fontSize: 10 },
-      text: [`+${vmax}`, `-${vmax}`],
-      // RdYlGn 9-class diverging palette
-      inRange: { color: [
-        '#d73027','#f46d43','#fdae61','#fee08b','#ffffbf',
-        '#d9ef8b','#a6d96a','#66bd63','#1a9850'
-      ]},
-    },
-    series: [{
-      type: 'heatmap',
-      data: heatData,
-      label: {
-        show: true,
-        fontSize: 10, fontWeight: 700,
-        formatter: p => {
-          const v = p.value[2];
-          if (!validNum(v)) return '—';
-          return (v >= 0 ? '+' : '') + v.toFixed(1);
-        },
-      },
-      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.3)' } },
-    }],
-  }, true);
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// Chart: Generic Grouped Bar (for breakdowns)
-// ══════════════════════════════════════════════════════════════════════════
-function renderGroupedBar(chartId, dataDict, title) {
-  const chart = ensureChart(chartId);
-  if (!chart) return;
-  const labels = getSelectedLabels().filter(l => dataDict[l]);
-  if (!labels.length) {
-    chart.clear();
-    chart.setOption({ title: { text: 'No data for selected models', left: 'center',
-                               top: 'center', textStyle: { color: '#999', fontSize: 14 } } });
-    return;
-  }
-
-  // Get all categories (union of all keys)
-  const catSet = new Set();
-  labels.forEach(l => keys(dataDict[l]).forEach(k => catSet.add(k)));
-  const categories = [...catSet].sort();
-
-  if (!categories.length) { chart.clear(); return; }
-
-  const series = labels.map(label => {
-    const m = modelByLabel(label);
-    return {
-      type: 'bar',
-      name: label,
-      data: categories.map(c => dataDict[label]?.[c] ?? null),
-      itemStyle: { color: m ? m.color : '#888' },
-    };
-  });
-
-  const rotate = categories.length > 6 ? 45 : 0;
-  const bottomPad = categories.length > 6 ? 120 : 60;
-
-  chart.setOption({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' },
-               confine: true },
-    legend: { data: labels, top: 0, type: 'scroll', textStyle: { fontSize: 10 } },
-    grid: { left: 60, right: 20, top: 50, bottom: bottomPad },
-    xAxis: {
-      type: 'category', data: categories,
-      axisLabel: { rotate, fontSize: 10, interval: 0 },
-    },
-    yAxis: { type: 'value', name: 'Score (%)', splitLine: { lineStyle: { type: 'dashed' } } },
-    series,
-    dataZoom: categories.length > 15 ? [
-      { type: 'slider', start: 0, end: 100, bottom: 10, height: 20 },
-    ] : [],
-  }, true);
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// Chart: PerceptionTest (multi-split)
-// ══════════════════════════════════════════════════════════════════════════
-function renderPerception() {
-  const chart = ensureChart('chartPerception');
-  if (!chart) return;
-  const splits = keys(DATA.perception);
-  const labels = getSelectedLabels();
-  if (!splits.length || !labels.length) { chart.clear(); return; }
-
-  // Merge all splits into one grouped bar with split prefix
-  const categories = [];
-  const dataMap = {};
-  splits.sort().forEach(split => {
-    const splitData = DATA.perception[split];
-    const cats = new Set();
-    labels.forEach(l => { if (splitData[l]) keys(splitData[l]).forEach(c => cats.add(c)); });
-    [...cats].sort().forEach(cat => {
-      const fullCat = `${split}/${cat}`;
-      categories.push(fullCat);
-      labels.forEach(l => {
-        dataMap[l] = dataMap[l] || [];
-        dataMap[l].push(splitData[l]?.[cat] ?? null);
-      });
-    });
-  });
-
-  const series = labels.filter(l => dataMap[l]).map(label => {
-    const m = modelByLabel(label);
-    return {
-      type: 'bar', name: label, data: dataMap[label],
-      itemStyle: { color: m ? m.color : '#888' },
-    };
-  });
-
-  chart.setOption({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true },
-    legend: { data: labels, top: 0, type: 'scroll', textStyle: { fontSize: 10 } },
-    grid: { left: 60, right: 20, top: 50, bottom: 120 },
-    xAxis: { type: 'category', data: categories,
-             axisLabel: { rotate: 45, fontSize: 9, interval: 0 } },
-    yAxis: { type: 'value', name: 'Accuracy (%)',
-             splitLine: { lineStyle: { type: 'dashed' } } },
-    series,
-    dataZoom: categories.length > 12 ? [
-      { type: 'slider', start: 0, end: 100, bottom: 10, height: 20 },
-    ] : [],
-  }, true);
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// Chart: Completeness Table & Bar
-// ══════════════════════════════════════════════════════════════════════════
-function renderCompletenessTable() {
-  const wrap = document.getElementById('compTableWrap');
-  if (!wrap) return;
-  const comp = DATA.completeness;
-  if (!comp) { wrap.innerHTML = '<p class="empty-msg">No completeness data</p>'; return; }
-
-  // Collect all dataset labels in order
-  const firstKey = Object.keys(comp)[0];
-  if (!firstKey) { wrap.innerHTML = '<p class="empty-msg">No models found</p>'; return; }
-  const dsKeys = Object.keys(comp[firstKey].datasets);
-  const dsLabels = dsKeys.map(k => comp[firstKey].datasets[k].label);
-
-  let html = '<table class="comp-table"><thead><tr>';
-  html += '<th>Model</th><th>Complete</th>';
-  dsLabels.forEach(l => { html += `<th>${l}</th>`; });
-  html += '</tr></thead><tbody>';
-
-  Object.entries(comp).forEach(([mKey, info]) => {
-    const isIncomplete = info.pct < 100;
-    html += `<tr class="${isIncomplete ? 'incomplete-row' : ''}">`;
-    // Model name + warn badge
-    const warnHtml = isIncomplete
-      ? `<span class="warn-badge">未完整 ${info.complete_count}/${info.total_count}</span>`
-      : '';
-    const pctColor = info.pct >= 100 ? '#27ae60' : info.pct >= 50 ? '#e67e22' : '#e74c3c';
-    html += `<td>
-      <span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;
-        background:${info.color};margin-right:4px;vertical-align:middle"></span>
-      ${info.label}${warnHtml}</td>`;
-    // Progress bar
-    html += `<td>
-      <div class="pct-bar-wrap">
-        <div class="pct-bar">
-          <div class="pct-bar-fill" style="width:${info.pct}%;background:${pctColor}"></div>
-        </div>
-        <span style="font-size:11px;color:${pctColor};font-weight:700">${info.pct}%</span>
-      </div>
-    </td>`;
-    // Per-dataset status
-    dsKeys.forEach(dk => {
-      const ds = info.datasets[dk];
-      if (ds.done) {
-        html += `<td><span class="badge-done" title="${ds.path || ''}">✓</span></td>`;
-      } else {
-        html += `<td><span class="badge-miss">✗</span></td>`;
-      }
-    });
-    html += '</tr>';
-  });
-  html += '</tbody></table>';
-  wrap.innerHTML = html;
-}
-
-function renderCompletenessChart() {
-  const chart = ensureChart('chartCompleteness');
-  if (!chart) return;
-  const comp = DATA.completeness;
-  if (!comp) { chart.clear(); return; }
-
-  const entries = Object.entries(comp);
-  // Sort by pct ascending so incomplete models show prominently
-  entries.sort((a, b) => a[1].pct - b[1].pct);
-
-  const labels = entries.map(([, v]) => v.label);
-  const pcts = entries.map(([, v]) => v.pct);
-  const colors = entries.map(([, v]) => {
-    if (v.pct >= 100) return '#27ae60';
-    if (v.pct >= 50)  return '#e67e22';
-    return '#e74c3c';
-  });
-
-  chart.setOption({
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-      formatter: params => {
-        const idx = params[0].dataIndex;
-        const [mKey, info] = entries[idx];
-        let tip = `<b>${info.label}</b><br>完成度: ${info.pct}% (${info.complete_count}/${info.total_count})<br><br>`;
-        Object.entries(info.datasets).forEach(([dk, ds]) => {
-          tip += `${ds.done ? '✅' : '❌'} ${ds.label}<br>`;
-        });
-        return tip;
-      }
-    },
-    grid: { left: 120, right: 60, top: 30, bottom: 30 },
-    xAxis: {
-      type: 'value', min: 0, max: 100,
-      axisLabel: { formatter: '{value}%' },
-      splitLine: { lineStyle: { type: 'dashed' } },
-    },
-    yAxis: {
-      type: 'category',
-      data: labels,
-      axisLabel: { fontSize: 11 },
-    },
-    series: [{
-      type: 'bar',
-      data: pcts.map((v, i) => ({ value: v, itemStyle: { color: colors[i] } })),
-      barWidth: '60%',
-      label: {
-        show: true, position: 'right', fontSize: 11,
-        formatter: p => {
-          const [, info] = entries[p.dataIndex];
-          return `${p.value.toFixed(0)}%  (${info.complete_count}/${info.total_count})`;
-        },
-      },
-    }],
-  }, true);
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// Resize handler
-// ══════════════════════════════════════════════════════════════════════════
-window.addEventListener('resize', () => {
-  Object.values(charts).forEach(c => c.resize());
-});
-
-// ══════════════════════════════════════════════════════════════════════════
-// Init
-// ══════════════════════════════════════════════════════════════════════════
-buildModelPanel();
-buildBenchmarkPanel();
-setupTabs();
-// Sync radar sensitivity label with slider default
-(function() {
-  const s = document.getElementById('radarSens');
-  if (s) {
-    radarPadFactor = sliderToFactor(+s.value);
-    document.getElementById('radarSensVal').textContent =
-      'pad \u00d7' + radarPadFactor.toFixed(2);
-  }
-})();
-// Mark completeness tab if any model is incomplete
-(function() {
-  const comp = DATA.completeness || {};
-  const hasIncomplete = Object.values(comp).some(v => v.pct < 100);
-  if (hasIncomplete) {
-    const btn = document.querySelector('.tab-btn[data-tab="completeness"]');
-    if (btn) btn.style.color = '#e67e22';
-  }
-})();
-updateCharts();
-
+// ── Init ──
+window.addEventListener('resize', () => { if (chartInstance) chartInstance.resize(); });
+renderTable();
+initSidebar();
 </script>
 </body>
 </html>
-'''
+"""
+
+
+def generate_dashboard(loader: ResultLoader, output_path: str):
+    """Write a self-contained HTML dashboard to output_path."""
+    data = export_data(loader)
+    data_json = json.dumps(data, ensure_ascii=False)
+    content = _TEMPLATE.replace('/**__DATA__**/', data_json)
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f'Dashboard written to {output_path}')
+
+
+def serve(loader: ResultLoader, port: int = 8890):
+    """Start an HTTP server that regenerates the dashboard on each request."""
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            data = export_data(loader)
+            data_json = json.dumps(data, ensure_ascii=False)
+            content = _TEMPLATE.replace('/**__DATA__**/', data_json)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(content.encode('utf-8'))
+
+        def log_message(self, format, *args):
+            pass
+
+    with socketserver.TCPServer(('', port), Handler) as httpd:
+        print(f'Dashboard serving at http://localhost:{port}  (Ctrl+C to stop)')
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print('\nShutting down.')
+
+
+def main():
+    """CLI entry point for standalone usage."""
+    import argparse
+    parser = argparse.ArgumentParser(description='Eval dashboard')
+    parser.add_argument('--work-dir', '--work_dir', required=True, help='Results directory')
+    parser.add_argument('-o', '--output', default=None, help='Output HTML file (default: serve mode)')
+    parser.add_argument('--port', type=int, default=8890)
+    args = parser.parse_args()
+
+    loader = ResultLoader(args.work_dir)
+    print(f'Discovered {len(loader.models)} models, {len(loader.benchmarks)} benchmarks')
+
+    if args.output:
+        generate_dashboard(loader, args.output)
+    else:
+        serve(loader, args.port)
 
 
 if __name__ == '__main__':
