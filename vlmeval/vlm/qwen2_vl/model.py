@@ -185,7 +185,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         max_new_tokens=2048,
         top_p=0.001,
         top_k=1,
-        temperature=0.01,
+        temperature=0,
         repetition_penalty=1.0,
         use_custom_prompt: bool = True,
         system_prompt: str | None = None,
