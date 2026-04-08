@@ -3,8 +3,8 @@
 
 Adapted from train/local_scripts/gpu_filler.py for the eval/vLLM inference
 scenario. Key differences from the training version:
-  - Smaller default matrices (4096/2048/3072) to avoid SM contention with vLLM
-  - Lower default batch (10) for shorter bursts — yields to vLLM faster
+  - Bigger default matrices (5120/4096/3072) for A800-class GPUs
+  - Higher default batch (15) for sustained fill bursts
   - Lower default target (80%) — leaves headroom for inference spikes
   - No signal file dependency — purely NVML-based detection
   - vLLM coexistence: when vLLM is actively inferring, util is high → Tier 5
@@ -177,7 +177,7 @@ _status: dict[int, str] = {}
 _status_lock = threading.Lock()
 
 # Timing constants
-IDLE_ESCALATION_TIMEOUT = 0.5   # seconds before escalating to big matrix
+IDLE_ESCALATION_TIMEOUT = 0.3   # seconds before escalating to big matrix
 
 
 def filler_worker(
@@ -242,7 +242,7 @@ def filler_worker(
             _low_util_since = None
             with _status_lock:
                 _status[gpu_id] = f"BACK(u={util}%)"
-            time.sleep(0.050)
+            time.sleep(0.020)
             continue
 
         # === Below target ===
@@ -254,20 +254,20 @@ def filler_worker(
             elapsed = time.time() - _low_util_since
 
             if elapsed >= IDLE_ESCALATION_TIMEOUT:
-                # === Tier 3: Sustained low util (>=0.5s) -> big matrix escalation ===
+                # === Tier 3: Sustained low util (>=0.3s) -> big matrix escalation ===
                 with _status_lock:
                     _status[gpu_id] = f"FILL(idle,u={util}%,{int(elapsed)}s)"
-                esc_batch = min(kernel_batch, 15)
+                esc_batch = min(kernel_batch, 25)
                 with torch.cuda.stream(stream):
                     for _ in range(esc_batch):
                         torch.matmul(a_big, b_big)
-                time.sleep(0.005)
+                time.sleep(0.001)
             else:
-                # === Tier 2: Brief low util (<0.5s) -> medium gap fill ===
+                # === Tier 2: Brief low util (<0.3s) -> medium gap fill ===
                 with _status_lock:
                     _status[gpu_id] = f"GFILL(u={util}%,{elapsed:.1f}s)"
                 with torch.cuda.stream(stream):
-                    for _ in range(30):
+                    for _ in range(50):
                         torch.matmul(a_gap, b_gap)
                 time.sleep(0.001)
         else:
@@ -280,17 +280,17 @@ def filler_worker(
                 with _status_lock:
                     _status[gpu_id] = f"PUSH(u={util}%)"
                 with torch.cuda.stream(stream):
-                    for _ in range(5):
+                    for _ in range(15):
                         torch.matmul(a_push, b_push)
-                time.sleep(0.002)
+                time.sleep(0.001)
             else:
-                # Near target: gentle push
+                # Near target: moderate push
                 with _status_lock:
                     _status[gpu_id] = f"PFILL(u={util}%)"
                 with torch.cuda.stream(stream):
-                    for _ in range(3):
+                    for _ in range(8):
                         torch.matmul(a_gap, b_gap)
-                time.sleep(0.003)
+                time.sleep(0.001)
 
     del a_big, b_big, a_push, b_push, a_gap, b_gap
     torch.cuda.empty_cache()
@@ -308,14 +308,14 @@ def main():
                         help="Comma-separated CUDA GPU IDs (default: all visible)")
     parser.add_argument("--target-util", type=int, default=80,
                         help="Target GPU utilization %% (default: 80)")
-    parser.add_argument("--matrix-size", type=int, default=4096,
-                        help="Matrix size for idle/escalation fill (default: 4096)")
-    parser.add_argument("--batch", type=int, default=10,
-                        help="Kernels per batch for idle fill (default: 10)")
-    parser.add_argument("--gap-matrix", type=int, default=2048,
-                        help="Matrix size for gap/near-target fill (default: 2048)")
-    parser.add_argument("--push-matrix", type=int, default=3072,
-                        help="Matrix size for push fill below target (default: 3072)")
+    parser.add_argument("--matrix-size", type=int, default=5120,
+                        help="Matrix size for idle/escalation fill (default: 5120)")
+    parser.add_argument("--batch", type=int, default=15,
+                        help="Kernels per batch for idle fill (default: 15)")
+    parser.add_argument("--gap-matrix", type=int, default=3072,
+                        help="Matrix size for gap/near-target fill (default: 3072)")
+    parser.add_argument("--push-matrix", type=int, default=4096,
+                        help="Matrix size for push fill below target (default: 4096)")
     args = parser.parse_args()
 
     if args.gpus:
