@@ -28,8 +28,8 @@ class FutureOmni(VideoBaseDataset):
 
     TYPE = 'Video-MCQ'
 
-    def __init__(self, dataset='FutureOmni', nframe=32, fps=-1):
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+    def __init__(self, dataset='FutureOmni', nframe=32, fps=-1, adaptive=False):
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     # ------------------------------------------------------------------ #
     #  Registration
@@ -106,7 +106,7 @@ class FutureOmni(VideoBaseDataset):
         message = [dict(type='text', value=_PROMPT_VL)]
 
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path))
         else:
             frames = self.save_video_frames(line['video'])
             for frame in frames:

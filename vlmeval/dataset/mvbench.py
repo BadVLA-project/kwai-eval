@@ -437,8 +437,8 @@ Based on your observations, select the best option that accurately addresses the
 """
     TYPE = 'Video-MCQ'
 
-    def __init__(self, dataset='MVBench_MP4', nframe=0, fps=-1):
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+    def __init__(self, dataset='MVBench_MP4', nframe=0, fps=-1, adaptive=False):
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -545,7 +545,10 @@ Based on your observations, select the best option that accurately addresses the
         max_frame = len(vr) - 1
 
         images_group = list()
-        if self.fps < 0:
+        if self.adaptive:
+            frame_indices = np.array(self.compute_adaptive_indices(vr))
+            self.num_segments = len(frame_indices)
+        elif self.fps < 0:
             frame_indices = self.get_index_by_frame(max_frame)
         else:
             frame_indices = self.get_index_by_fps(vr, self.fps)
@@ -557,10 +560,15 @@ Based on your observations, select the best option that accurately addresses the
         return torch_imgs
 
     def save_video_frames(self, imgs, video_name, frames):
-        if self.fps > 0:
+        if self.adaptive:
+            frame_paths = self.frame_paths_adaptive(video_name, frames)
+            _strategy = 'adaptive'
+        elif self.fps > 0:
             frame_paths = self.frame_paths_fps(video_name, frames)
+            _strategy = f'{self.fps}fps'
         else:
             frame_paths = self.frame_paths(video_name)
+            _strategy = f'uniform nframe={self.nframe}'
         flag = np.all([osp.exists(p) for p in frame_paths])
 
         if not flag:
@@ -574,12 +582,17 @@ Based on your observations, select the best option that accurately addresses the
                     for im, pth in zip(images, frame_paths):
                         if not osp.exists(pth):
                             im.save(pth)
+            logging.info(f'[frames] {video_name}: {len(frame_paths)} frames ({_strategy}) [extracted]')
+        else:
+            logging.info(f'[frames] {video_name}: {len(frame_paths)} frames ({_strategy}) [cached]')
 
         return frame_paths
 
     def save_video_into_images(self, line):
         video_path = os.path.join(self.data_root, line['prefix'], line['video'])
-        if self.fps <= 0:
+        if self.adaptive:
+            self.num_segments = 0  # will be set in read_video
+        elif self.fps <= 0:
             self.num_segments = self.nframe
         else:
             self.num_segments = 0
@@ -596,7 +609,7 @@ Based on your observations, select the best option that accurately addresses the
         message = [dict(type='text', value=self.SYS, role='system')]
         video_path = os.path.join(self.data_root, line['prefix'], line['video'])
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path))
         else:
             img_frame_paths = self.save_video_into_images(line)
             for im in img_frame_paths:

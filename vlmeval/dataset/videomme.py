@@ -48,8 +48,8 @@ Select the best answer to the following multiple-choice question based on the vi
     TYPE = 'Video-MCQ'
     DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
-    def __init__(self, dataset='Video-MME', use_subtitle=False, nframe=0, fps=-1, durations=None):
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+    def __init__(self, dataset='Video-MME', use_subtitle=False, nframe=0, fps=-1, durations=None, adaptive=False):
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
         self.use_subtitle = use_subtitle
         self.dataset_name = dataset
         if durations is not None:
@@ -201,10 +201,15 @@ Select the best answer to the following multiple-choice question based on the vi
             'fps': vid.get_avg_fps(),
             'n_frames': len(vid),
         }
-        if self.nframe > 0 and self.fps < 0:
+        if self.adaptive:
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self.frame_paths_adaptive(video, len(indices))
+            _strategy = getattr(self, '_last_adaptive_strategy', 'adaptive')
+        elif self.nframe > 0 and self.fps < 0:
             step_size = len(vid) / (self.nframe + 1)
             indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
             frame_paths = self.frame_paths(video)
+            _strategy = f'uniform nframe={self.nframe}'
         elif self.fps > 0:
             # not constrained by num_frames, get frames by fps
             total_duration = video_info['n_frames'] / video_info['fps']
@@ -212,6 +217,7 @@ Select the best answer to the following multiple-choice question based on the vi
             step_size = video_info['fps'] / self.fps
             indices = [int(i * step_size) for i in range(required_frames)]
             frame_paths = self.frame_paths_fps(video, len(indices))
+            _strategy = f'{self.fps}fps (dur={total_duration:.1f}s)'
 
         flag = np.all([osp.exists(p) for p in frame_paths])
 
@@ -224,6 +230,9 @@ Select the best answer to the following multiple-choice question based on the vi
                     for im, pth in zip(images, frame_paths):
                         if not osp.exists(pth):
                             im.save(pth)
+            logging.info(f'[frames] {video}: {len(frame_paths)} frames ({_strategy}) [extracted]')
+        else:
+            logging.info(f'[frames] {video}: {len(frame_paths)} frames ({_strategy}) [cached]')
 
         return frame_paths, indices, video_info
 
@@ -254,7 +263,7 @@ Select the best answer to the following multiple-choice question based on the vi
 
         message = [dict(type='text', value=self.SYS)]
         if video_llm:
-            message.append(dict(type='video', value=osp.join(self.data_root, 'video', line['video'] + '.mp4')))
+            message.append(self.make_video_struct(osp.join(self.data_root, 'video', line['video'] + '.mp4')))
         else:
             for im in frames:
                 message.append(dict(type='image', value=im))

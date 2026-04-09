@@ -77,10 +77,10 @@ class CharadesSTA(VideoBaseDataset):
 
     TYPE = 'Video-VQA'
 
-    def __init__(self, dataset='CharadesSTA', nframe=32, fps=-1):
-        if fps > 0:
+    def __init__(self, dataset='CharadesSTA', nframe=32, fps=-1, adaptive=False):
+        if not adaptive and fps > 0:
             nframe = 0
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -173,7 +173,7 @@ class CharadesSTA(VideoBaseDataset):
 
         message = []
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path))
         else:
             frames = self.save_video_frames(video_id)
             for frame in frames:
@@ -270,12 +270,12 @@ class CharadesTimeLens(CharadesSTA):
 
     TYPE = 'Video-VQA'
 
-    def __init__(self, dataset='CharadesTimeLens', nframe=32, fps=-1):
-        if fps > 0:
+    def __init__(self, dataset='CharadesTimeLens', nframe=32, fps=-1, adaptive=False):
+        if not adaptive and fps > 0:
             nframe = 0
         # Skip CharadesSTA.__init__ and call VideoBaseDataset.__init__ directly
         # (same pattern as the parent, just override prepare_dataset)
-        VideoBaseDataset.__init__(self, dataset=dataset, nframe=nframe, fps=fps)
+        VideoBaseDataset.__init__(self, dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -355,7 +355,7 @@ class CharadesTimeLens(CharadesSTA):
 
         message = []
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path))
         else:
             frames = self.save_video_frames(video_id)
             for frame in frames:

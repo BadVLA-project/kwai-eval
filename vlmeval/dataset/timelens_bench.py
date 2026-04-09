@@ -218,15 +218,15 @@ class TimeLensBench(VideoBaseDataset):
 
     TYPE = 'Video-VQA'
 
-    def __init__(self, dataset='TimeLensBench_Charades', nframe=32, fps=-1):
-        if fps > 0:
+    def __init__(self, dataset='TimeLensBench_Charades', nframe=32, fps=-1, adaptive=False):
+        if not adaptive and fps > 0:
             nframe = 0
         assert dataset in _DATASET_CONFIG, (
             f'Unknown TimeLensBench dataset: {dataset}. '
             f'Supported: {list(_DATASET_CONFIG.keys())}'
         )
         self._cfg = _DATASET_CONFIG[dataset]
-        VideoBaseDataset.__init__(self, dataset=dataset, nframe=nframe, fps=fps)
+        VideoBaseDataset.__init__(self, dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -307,7 +307,7 @@ class TimeLensBench(VideoBaseDataset):
 
         message = []
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path))
         else:
             frames = self.save_video_frames(video_id)
             for frame in frames:

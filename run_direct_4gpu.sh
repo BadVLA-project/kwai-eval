@@ -78,13 +78,23 @@ export ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
 # Datasets & Model
 # ---------------------------------------------------------------------------
 DATASETS=(
-  AoTBench_ReverseFilm_16frame
-  AoTBench_UCF101_16frame
-  AoTBench_Rtime_t2v_16frame
-  AoTBench_Rtime_v2t_16frame
-  AoTBench_QA_16frame
-  CharadesTimeLens_1fps
-  MVBench_MP4_1fps
+  AoTBench_ReverseFilm_adaptive
+  AoTBench_UCF101_adaptive
+  AoTBench_Rtime_t2v_adaptive
+  AoTBench_Rtime_v2t_adaptive
+  AoTBench_QA_adaptive
+  FutureOmni_adaptive
+  CharadesTimeLens_adaptive
+  CharadesSTA_adaptive
+  MVBench_MP4_adaptive
+  PerceptionTest_val_adaptive
+  Video_Holmes_adaptive
+  Video-MME_adaptive
+  ETBench_adaptive
+  MLVU_MCQ_adaptive
+  TimeLensBench_Charades_adaptive
+  TimeLensBench_ActivityNet_adaptive
+  TimeLensBench_QVHighlights_adaptive
 )
 
 MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"

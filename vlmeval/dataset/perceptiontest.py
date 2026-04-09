@@ -27,10 +27,10 @@ class PerceptionTest(VideoBaseDataset):
 
     TYPE = 'Video-MCQ'
 
-    def __init__(self, dataset='PerceptionTest_val', nframe=16, fps=-1):
-        if fps > 0:
+    def __init__(self, dataset='PerceptionTest_val', nframe=16, fps=-1, adaptive=False):
+        if not adaptive and fps > 0:
             nframe = 0
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -166,7 +166,7 @@ class PerceptionTest(VideoBaseDataset):
 
         message = []
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path))
         else:
             frames = self.save_video_frames(video_name)
             for frame in frames:

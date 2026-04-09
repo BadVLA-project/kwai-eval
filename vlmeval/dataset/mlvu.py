@@ -63,7 +63,7 @@ class MLVU_MCQ(VideoBaseDataset):
     TYPE = 'Video-MCQ'
     DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
-    def __init__(self, dataset='MLVU_MCQ', nframe=0, fps=-1):
+    def __init__(self, dataset='MLVU_MCQ', nframe=0, fps=-1, adaptive=False):
         self.type_data_list = {
             'plotQA': ('1_plotQA.json', './MLVU/video/1_plotQA', 'MCQ'),
             'needle': ('2_needle.json', './MLVU/video/2_needle', 'MCQ'),
@@ -73,7 +73,7 @@ class MLVU_MCQ(VideoBaseDataset):
             'anomaly_reco': ('6_anomaly_reco.json', './MLVU/video/6_anomaly_reco', 'MCQ'),
             'topic_reasoning': ('7_topic_reasoning.json', './MLVU/video/7_topic_reasoning', 'MCQ'),
         }
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -242,10 +242,15 @@ class MLVU_MCQ(VideoBaseDataset):
             'fps': vid.get_avg_fps(),
             'n_frames': len(vid),
         }
-        if self.nframe > 0 and self.fps < 0:
+        if self.adaptive:
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self.frame_paths_adaptive(video, len(indices))
+            _strategy = getattr(self, '_last_adaptive_strategy', 'adaptive')
+        elif self.nframe > 0 and self.fps < 0:
             step_size = len(vid) / (self.nframe + 1)
             indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
             frame_paths = self.frame_paths(video)
+            _strategy = f'uniform nframe={self.nframe}'
         elif self.fps > 0:
             # not constrained by num_frames, get frames by fps
             total_duration = video_info['n_frames'] / video_info['fps']
@@ -253,6 +258,7 @@ class MLVU_MCQ(VideoBaseDataset):
             step_size = video_info['fps'] / self.fps
             indices = [int(i * step_size) for i in range(required_frames)]
             frame_paths = self.frame_paths_fps(video, len(indices))
+            _strategy = f'{self.fps}fps (dur={total_duration:.1f}s)'
 
         flag = np.all([osp.exists(p) for p in frame_paths])
 
@@ -265,6 +271,9 @@ class MLVU_MCQ(VideoBaseDataset):
                     for im, pth in zip(images, frame_paths):
                         if not osp.exists(pth):
                             im.save(pth)
+            logging.info(f'[frames] {video}: {len(frame_paths)} frames ({_strategy}) [extracted]')
+        else:
+            logging.info(f'[frames] {video}: {len(frame_paths)} frames ({_strategy}) [cached]')
 
         return frame_paths
 
@@ -281,7 +290,7 @@ class MLVU_MCQ(VideoBaseDataset):
         message = [dict(type='text', value=self.SYS, role='system')]
         video_path = os.path.join(self.data_root, str(line['prefix']), str(line['video']))
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path))
         else:
             img_frame_paths = self.save_video_into_images(line)
             for im in img_frame_paths:
@@ -554,7 +563,7 @@ class MLVU_OpenEnded(VideoBaseDataset):
         message = [dict(type='text', value=self.SYS, role='system')]
         video_path = os.path.join(self.data_root, str(line['prefix']), str(line['video']))
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path))
         else:
             img_frame_paths = self.save_video_into_images(line)
             for im in img_frame_paths:

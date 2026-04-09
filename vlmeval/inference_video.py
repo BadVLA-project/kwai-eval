@@ -32,6 +32,28 @@ def _extract_prompt_text(struct):
     return '\n'.join(parts)
 
 
+def _extract_frame_info(struct):
+    """Extract frame count and sampling strategy from a prompt struct.
+
+    Returns (num_frames, strategy) tuple. For video_llm mode, extracts from
+    the video item's fps/nframes keys. For image mode, counts image items.
+    """
+    n_images = sum(1 for s in struct if s.get('type') == 'image')
+    if n_images > 0:
+        return n_images, 'frames-as-images'
+    for s in struct:
+        if s.get('type') == 'video':
+            fps = s.get('fps')
+            nframes = s.get('nframes')
+            if fps is not None:
+                return -1, f'{fps}fps'
+            elif nframes is not None:
+                return nframes, f'uniform-{nframes}'
+            else:
+                return -1, 'model-default'
+    return -1, 'unknown'
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, nargs='+', required=True)
@@ -107,6 +129,9 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     # Prompt text log: saved alongside predictions for debugging / xlsx output
     prompts_file = out_file.rsplit('.', 1)[0] + '_prompts.pkl'
     prompts_dict = load(prompts_file) if osp.exists(prompts_file) else {}
+    # Frame info log: num_frames and strategy per sample
+    frame_info_file = out_file.rsplit('.', 1)[0] + '_frame_info.pkl'
+    frame_info_dict = load(frame_info_file) if osp.exists(frame_info_file) else {}
     rank, world_size = get_rank_and_world_size()
     dataset_name = dataset.dataset_name
     skip_err = os.environ.get('SKIP_ERR', '0') == '1'
@@ -255,6 +280,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             if getattr(model, 'post_prompt', None) and not _has_sentinel:
                 _pt += '\n' + model.post_prompt
             prompts_dict[idx] = _pt
+            frame_info_dict[idx] = _extract_frame_info(struct)
 
         if batch_structs:
             chunk_size = int(os.environ.get('VLLM_BATCH_CHUNK_SIZE', '32'))
@@ -277,6 +303,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         res = {k: res[k] for k in sample_indices_sub}
         dump(res, out_file)
         dump(prompts_dict, prompts_file)
+        dump(frame_info_dict, frame_info_file)
         return model
     # ------------------------------------------------------------------
 
@@ -343,6 +370,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             if getattr(model, 'post_prompt', None) and not _has_sentinel:
                 _pt += '\n' + model.post_prompt
             prompts_dict[idx] = _pt
+            frame_info_dict[idx] = _extract_frame_info(struct)
 
         if batch_structs:
             responses = model.generate_batch_transformers(
@@ -355,6 +383,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         res = {k: res[k] for k in sample_indices_sub}
         dump(res, out_file)
         dump(prompts_dict, prompts_file)
+        dump(frame_info_dict, frame_info_file)
         return model
     # ------------------------------------------------------------------
 
@@ -426,6 +455,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         if getattr(model, 'post_prompt', None) and not _has_sentinel:
             _pt += '\n' + model.post_prompt
         prompts_dict[idx] = _pt
+        frame_info_dict[idx] = _extract_frame_info(struct)
 
         # Print the first batch prompt for sanity check
         if i == 0 and rank == 0:
@@ -465,6 +495,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     res = {k: res[k] for k in sample_indices_sub}
     dump(res, out_file)
     dump(prompts_dict, prompts_file)
+    dump(frame_info_dict, frame_info_file)
     return model
 
 
@@ -544,6 +575,16 @@ def infer_data_job_video(
             if osp.exists(pf):
                 prompts_all.update(load(pf))
 
+        # Merge frame info from all ranks
+        frame_info_tmpl = osp.join(
+            work_dir, '{}' + f'{world_size}_{osp.splitext(result_file_name)[0]}_frame_info.pkl'
+        )
+        frame_info_all = {}
+        for i in range(world_size):
+            ff = frame_info_tmpl.format(i)
+            if osp.exists(ff):
+                frame_info_all.update(load(ff))
+
         meta = dataset.data
         if dataset_name == 'MMBench-Video' and getattr(dataset, 'pack', False):
             meta, vstats = dataset.load_pack_answers(data_all)
@@ -555,6 +596,10 @@ def infer_data_job_video(
             # Add prompt text column if prompts were captured
             if prompts_all:
                 meta['prompt'] = [prompts_all.get(x, '') for x in meta['index']]
+            # Add frame info columns if captured
+            if frame_info_all:
+                meta['num_frames'] = [frame_info_all.get(x, (-1, ''))[0] for x in meta['index']]
+                meta['sampling_strategy'] = [frame_info_all.get(x, (-1, ''))[1] for x in meta['index']]
             if 'image' in meta:
                 meta.pop('image')
 
@@ -568,4 +613,8 @@ def infer_data_job_video(
             pf = prompts_tmpl.format(i)
             if osp.exists(pf):
                 os.remove(pf)
+            # Clean up frame info pkl files
+            ff = frame_info_tmpl.format(i)
+            if osp.exists(ff):
+                os.remove(ff)
     return model

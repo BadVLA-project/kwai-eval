@@ -52,6 +52,7 @@ export VIDEO_HOLMES_DIR="${VIDEO_HOLMES_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks
 export TIMELENS_DIR="${TIMELENS_DIR:-/m2v_intern/xuboshen/zgw/hf_cache_temp/TimeLens-Bench}"
 export PERCEPTION_TEST_DIR="${PERCEPTION_TEST_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/PerceptionTest}"
 export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
+export ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
 
 # ---------------------------------------------------------------------------
 # Multi-GPU data-parallel launch via torchrun.
@@ -72,15 +73,23 @@ export TORCH_BATCH_SIZE="${TORCH_BATCH_SIZE:-8}"
 # Datasets & Models
 # ---------------------------------------------------------------------------
 DATASETS=(
-  AoTBench_ReverseFilm_16frame
-  AoTBench_UCF101_16frame
-  AoTBench_Rtime_t2v_16frame
-  AoTBench_Rtime_v2t_16frame
-  AoTBench_QA_16frame
-  FutureOmni_64frame
-  CharadesTimeLens_1fps
-  MVBench_MP4_1fps
-  PerceptionTest_val_16frame
+  AoTBench_ReverseFilm_adaptive
+  AoTBench_UCF101_adaptive
+  AoTBench_Rtime_t2v_adaptive
+  AoTBench_Rtime_v2t_adaptive
+  AoTBench_QA_adaptive
+  FutureOmni_adaptive
+  CharadesTimeLens_adaptive
+  CharadesSTA_adaptive
+  MVBench_MP4_adaptive
+  PerceptionTest_val_adaptive
+  Video_Holmes_adaptive
+  Video-MME_adaptive
+  ETBench_adaptive
+  MLVU_MCQ_adaptive
+  TimeLensBench_Charades_adaptive
+  TimeLensBench_ActivityNet_adaptive
+  TimeLensBench_QVHighlights_adaptive
 )
 
 MODELS=(

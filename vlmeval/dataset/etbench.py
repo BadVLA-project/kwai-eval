@@ -997,11 +997,12 @@ class ETBench(VideoBaseDataset):
         task_filter=None,
         data_root=None,
         video_source='auto',
+        adaptive=False,
     ):
         self._task_filter = task_filter
         self._data_root_override = data_root
         self._video_source = video_source
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -1217,7 +1218,11 @@ class ETBench(VideoBaseDataset):
 
         vid = decord.VideoReader(vid_path)
 
-        if self.fps > 0:
+        if self.adaptive:
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self.frame_paths_adaptive(video, len(indices))
+            _strategy = getattr(self, '_last_adaptive_strategy', 'adaptive')
+        elif self.fps > 0:
             total_frames = len(vid)
             video_fps = vid.get_avg_fps()
             total_duration = total_frames / video_fps
@@ -1225,18 +1230,22 @@ class ETBench(VideoBaseDataset):
             step_size = video_fps / self.fps
             indices = [int(i * step_size) for i in range(required_frames)]
             frame_paths = self.frame_paths_fps(video, len(indices))
+            _strategy = f'{self.fps}fps (dur={total_duration:.1f}s)'
         else:
             step_size = len(vid) / (self.nframe + 1)
             indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
             frame_paths = self.frame_paths(video)
+            _strategy = f'uniform nframe={self.nframe}'
 
         if np.all([osp.exists(p) for p in frame_paths]):
+            logging.info(f'[frames] {video}: {len(frame_paths)} frames ({_strategy}) [cached]')
             return frame_paths
 
         import portalocker
         lock_path = osp.join(self.frame_root, video + '.lock')
         with portalocker.Lock(lock_path, 'w', timeout=60):
             if np.all([osp.exists(p) for p in frame_paths]):
+                logging.info(f'[frames] {video}: {len(frame_paths)} frames ({_strategy}) [cached]')
                 return frame_paths
             images = [vid[i].asnumpy() for i in indices]
             images = [Image.fromarray(arr) for arr in images]
@@ -1244,6 +1253,7 @@ class ETBench(VideoBaseDataset):
                 if not osp.exists(pth):
                     im.save(pth)
 
+        logging.info(f'[frames] {video}: {len(frame_paths)} frames ({_strategy}) [extracted]')
         return frame_paths
 
     # ------------------------------------------------------------------
@@ -1290,7 +1300,7 @@ class ETBench(VideoBaseDataset):
 
         message = []
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path))
         else:
             frames = self.save_video_frames(video_id)
             for frame in frames:
