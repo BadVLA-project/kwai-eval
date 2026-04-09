@@ -324,6 +324,46 @@ perceptiontest_dataset = {
     'PerceptionTest_test_1fps': partial(PerceptionTest, dataset='PerceptionTest_test', fps=1.0),
 }
 
+# ---------------------------------------------------------------------------
+# Adaptive sampling: ≤30s → 2fps, 30–256s → 1fps, >256s → uniform 256 frames
+# ---------------------------------------------------------------------------
+adaptive_dataset = {
+    # AoTBench
+    'AoTBench_ReverseFilm_adaptive': partial(AoTBench, dataset='AoTBench_ReverseFilm', adaptive=True),
+    'AoTBench_UCF101_adaptive': partial(AoTBench, dataset='AoTBench_UCF101', adaptive=True),
+    'AoTBench_Rtime_t2v_adaptive': partial(AoTBench, dataset='AoTBench_Rtime_t2v', adaptive=True),
+    'AoTBench_Rtime_v2t_adaptive': partial(AoTBench, dataset='AoTBench_Rtime_v2t', adaptive=True),
+    'AoTBench_QA_adaptive': partial(AoTBench, dataset='AoTBench_QA', adaptive=True),
+    # CharadesTimeLens
+    'CharadesTimeLens_adaptive': partial(CharadesTimeLens, dataset='CharadesTimeLens', adaptive=True),
+    # MVBench_MP4
+    'MVBench_MP4_adaptive': partial(MVBench_MP4, dataset='MVBench_MP4', adaptive=True),
+    # ETBench
+    'ETBench_adaptive': partial(ETBench, dataset='ETBench', adaptive=True),
+    'ETBench_adaptive_compressed': partial(ETBench, dataset='ETBench', adaptive=True, video_source='compressed'),
+    'ETBench_subset_adaptive': partial(ETBench, dataset='ETBench_subset', adaptive=True),
+    'ETBench_subset_adaptive_compressed': partial(
+        ETBench, dataset='ETBench_subset', adaptive=True, video_source='compressed'),
+    # Video-MME
+    'Video-MME_adaptive': partial(VideoMME, dataset='Video-MME', adaptive=True),
+    'Video-MME_adaptive_subs': partial(VideoMME, dataset='Video-MME', adaptive=True, use_subtitle=True),
+    # Video_Holmes
+    'Video_Holmes_adaptive': partial(Video_Holmes, dataset='Video_Holmes', adaptive=True),
+    # FutureOmni
+    'FutureOmni_adaptive': partial(FutureOmni, dataset='FutureOmni', adaptive=True),
+    # PerceptionTest
+    'PerceptionTest_val_adaptive': partial(PerceptionTest, dataset='PerceptionTest_val', adaptive=True),
+    'PerceptionTest_test_adaptive': partial(PerceptionTest, dataset='PerceptionTest_test', adaptive=True),
+    # TimeLensBench
+    'TimeLensBench_Charades_adaptive': partial(TimeLensBench, dataset='TimeLensBench_Charades', adaptive=True),
+    'TimeLensBench_ActivityNet_adaptive': partial(TimeLensBench, dataset='TimeLensBench_ActivityNet', adaptive=True),
+    'TimeLensBench_QVHighlights_adaptive': partial(TimeLensBench, dataset='TimeLensBench_QVHighlights', adaptive=True),
+    # MLVU
+    'MLVU_MCQ_adaptive': partial(MLVU_MCQ, dataset='MLVU_MCQ', adaptive=True),
+    # CharadesSTA
+    'CharadesSTA_adaptive': partial(CharadesSTA, dataset='CharadesSTA', adaptive=True),
+}
+
 dataset_groups = [
     mmbench_video_dataset, mvbench_dataset, videomme_dataset, videomme_v2_dataset, videommmu_dataset, longvideobench_dataset,
     mlvu_dataset, tempcompass_dataset, cgbench_dataset, worldsense_dataset, tamperbench_dataset,
@@ -332,6 +372,7 @@ dataset_groups = [
     vsibench_dataset, aotbench_dataset, futureomni_dataset,
     charades_sta_dataset, charades_timelens_dataset, timelens_bench_dataset, perceptiontest_dataset,
     etbench_dataset,
+    adaptive_dataset,
 ]
 
 for grp in dataset_groups:

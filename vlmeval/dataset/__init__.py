@@ -283,6 +283,10 @@ def DATASET_TYPE(dataset, *, default: str = 'MCQ') -> str:
         assert np.all([x == TYPES[0] for x in TYPES]), (dataset_list, TYPES)
         return TYPES[0]
 
+    # Dynamic _adaptive suffix: resolve via base name
+    if dataset.endswith('_adaptive'):
+        return DATASET_TYPE(dataset[:-len('_adaptive')], default=default)
+
     if 'openended' in dataset.lower():
         return 'VQA'
     warnings.warn(f'Dataset {dataset} is a custom one and not annotated as `openended`, will treat as {default}. ')  # noqa: E501
@@ -307,6 +311,10 @@ def DATASET_MODALITY(dataset, *, default: str = 'IMAGE') -> str:
         assert np.all([x == MODALITIES[0] for x in MODALITIES]), (dataset_list, MODALITIES)
         return MODALITIES[0]
 
+    # Dynamic _adaptive suffix: resolve via base name
+    if dataset.endswith('_adaptive'):
+        return DATASET_MODALITY(dataset[:-len('_adaptive')], default=default)
+
     if 'VIDEO' in dataset.lower():
         return 'VIDEO'
     elif 'IMAGE' in dataset.lower():
@@ -321,6 +329,19 @@ def build_dataset(dataset_name, **kwargs):
             return supported_video_datasets[dataset_name](**kwargs)
         elif dataset_name in cls.supported_datasets():
             return cls(dataset=dataset_name, **kwargs)
+
+    # Dynamic _adaptive suffix resolution: strip suffix, find base entry, add adaptive=True
+    if dataset_name.endswith('_adaptive'):
+        base_name = dataset_name[:-len('_adaptive')]
+        # Look for any registered video dataset whose key starts with base_name
+        for key, factory in supported_video_datasets.items():
+            if not key.startswith(base_name + '_'):
+                continue
+            return factory.func(dataset=base_name, adaptive=True, **kwargs)
+        # Also check DATASET_CLASSES (non-video-config datasets)
+        for cls in DATASET_CLASSES:
+            if base_name in cls.supported_datasets():
+                return cls(dataset=base_name, adaptive=True, **kwargs)
 
     warnings.warn(f'Dataset {dataset_name} is not officially supported. ')
     data_file = osp.join(LMUDataRoot(), f'{dataset_name}.tsv')
