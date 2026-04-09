@@ -39,9 +39,16 @@ class VideoBaseDataset:
         videos.sort()
         self.videos = videos
         self.pack = pack
-        self.nframe = nframe
-        self.fps = fps
         self.adaptive = adaptive
+        if self.adaptive:
+            # Adaptive mode: per-sample structs carry fps/nframes;
+            # clear dataset-level defaults so inference sync doesn't
+            # override model settings.
+            self.nframe = 0
+            self.fps = -1
+        else:
+            self.nframe = nframe
+            self.fps = fps
         self.frame_info = {}  # video_id -> {'num_frames': int, 'strategy': str}
         if not self.adaptive:
             if self.fps > 0 and self.nframe > 0:

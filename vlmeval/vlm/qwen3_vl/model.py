@@ -409,9 +409,9 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                     if key in s and s[key] is not None:
                         item[key] = s[key]
                 if not isinstance(value, list):
-                    if self.fps is not None and 'fps' not in item:
+                    if self.fps is not None and 'fps' not in item and 'nframes' not in item:
                         item['fps'] = self.fps
-                    elif self.nframe is not None and 'nframes' not in item:
+                    elif self.nframe is not None and 'nframes' not in item and 'fps' not in item:
                         import cv2
                         video = cv2.VideoCapture(s['value'])
                         frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))

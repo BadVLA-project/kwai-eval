@@ -190,7 +190,11 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                     "fps": getattr(model, 'fps', None),
                     "nframe": getattr(model, 'nframe', None),
                     # 特别保存 limit_mm_per_prompt，这对应你修改的 VLLM_MAX_IMAGE_INPUT_NUM
-                    "limit_mm_per_prompt": getattr(model, 'limit_mm_per_prompt', None)
+                    "limit_mm_per_prompt": getattr(model, 'limit_mm_per_prompt', None),
+                    # Adaptive sampling metadata
+                    "dataset_adaptive": getattr(dataset, 'adaptive', False),
+                    "dataset_nframe": getattr(dataset, 'nframe', None),
+                    "dataset_fps": getattr(dataset, 'fps', None),
                 }
 
                 with open(config_save_path, 'w', encoding='utf-8') as f:
@@ -230,24 +234,26 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     # ------------------------------------------------------------------
     if getattr(model, 'use_vllm', False) and hasattr(model, 'generate_batch_vllm'):
         # Sync nframe / fps once before building prompts (match non-vLLM path logic)
-        if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
-            if dataset.nframe > 0:
-                if getattr(model, 'nframe', 0) != dataset.nframe:
-                    print(f'{model_name} nframe -> {dataset.nframe}')
-                    setattr(model, 'nframe', dataset.nframe)
-            elif getattr(model, 'fps', 0) == 0:
-                raise ValueError(f'fps is not suitable for {model_name}')
-            else:
-                setattr(model, 'nframe', None)
-        if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
-            if dataset.fps > 0:
-                if getattr(model, 'fps', 0) != dataset.fps:
-                    print(f'{model_name} fps -> {dataset.fps}')
-                    setattr(model, 'fps', dataset.fps)
-            elif getattr(model, 'nframe', 0) == 0:
-                raise ValueError(f'nframe is not suitable for {model_name}')
-            else:
-                setattr(model, 'fps', None)
+        # Skip sync for adaptive mode: per-sample structs carry fps/nframes
+        if not getattr(dataset, 'adaptive', False):
+            if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
+                if dataset.nframe > 0:
+                    if getattr(model, 'nframe', 0) != dataset.nframe:
+                        print(f'{model_name} nframe -> {dataset.nframe}')
+                        setattr(model, 'nframe', dataset.nframe)
+                elif getattr(model, 'fps', 0) == 0:
+                    raise ValueError(f'fps is not suitable for {model_name}')
+                else:
+                    setattr(model, 'nframe', None)
+            if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
+                if dataset.fps > 0:
+                    if getattr(model, 'fps', 0) != dataset.fps:
+                        print(f'{model_name} fps -> {dataset.fps}')
+                        setattr(model, 'fps', dataset.fps)
+                elif getattr(model, 'nframe', 0) == 0:
+                    raise ValueError(f'nframe is not suitable for {model_name}')
+                else:
+                    setattr(model, 'fps', None)
 
         batch_indices, batch_structs = [], []
         for idx in tqdm(sample_indices_subrem, desc=f'Build prompts {model_name}/{dataset_name}'):
@@ -321,24 +327,26 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         and hasattr(model, 'generate_batch_transformers')
     ):
         # Sync nframe / fps once before building prompts (match non-vLLM path logic)
-        if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
-            if dataset.nframe > 0:
-                if getattr(model, 'nframe', 0) != dataset.nframe:
-                    print(f'{model_name} nframe -> {dataset.nframe}')
-                    setattr(model, 'nframe', dataset.nframe)
-            elif getattr(model, 'fps', 0) == 0:
-                raise ValueError(f'fps is not suitable for {model_name}')
-            else:
-                setattr(model, 'nframe', None)
-        if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
-            if dataset.fps > 0:
-                if getattr(model, 'fps', 0) != dataset.fps:
-                    print(f'{model_name} fps -> {dataset.fps}')
-                    setattr(model, 'fps', dataset.fps)
-            elif getattr(model, 'nframe', 0) == 0:
-                raise ValueError(f'nframe is not suitable for {model_name}')
-            else:
-                setattr(model, 'fps', None)
+        # Skip sync for adaptive mode: per-sample structs carry fps/nframes
+        if not getattr(dataset, 'adaptive', False):
+            if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
+                if dataset.nframe > 0:
+                    if getattr(model, 'nframe', 0) != dataset.nframe:
+                        print(f'{model_name} nframe -> {dataset.nframe}')
+                        setattr(model, 'nframe', dataset.nframe)
+                elif getattr(model, 'fps', 0) == 0:
+                    raise ValueError(f'fps is not suitable for {model_name}')
+                else:
+                    setattr(model, 'nframe', None)
+            if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
+                if dataset.fps > 0:
+                    if getattr(model, 'fps', 0) != dataset.fps:
+                        print(f'{model_name} fps -> {dataset.fps}')
+                        setattr(model, 'fps', dataset.fps)
+                elif getattr(model, 'nframe', 0) == 0:
+                    raise ValueError(f'nframe is not suitable for {model_name}')
+                else:
+                    setattr(model, 'fps', None)
 
         batch_indices, batch_structs = [], []
         for idx in tqdm(sample_indices_subrem, desc=f'Build prompts {model_name}/{dataset_name}'):
@@ -396,24 +404,26 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     ):
         if idx in res:
             continue
-        if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
-            if dataset.nframe > 0:
-                if getattr(model, 'nframe', 0) != dataset.nframe:
-                    print(f'{model_name} is a video-llm model, nframe is set to {dataset.nframe}, not using default')
-                    setattr(model, 'nframe', dataset.nframe)
-            elif getattr(model, 'fps', 0) == 0:
-                raise ValueError(f'fps is not suitable for {model_name}')
-            else:
-                setattr(model, 'nframe', None)
-        if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
-            if dataset.fps > 0:
-                if getattr(model, 'fps', 0) != dataset.fps:
-                    print(f'{model_name} is a video-llm model, fps is set to {dataset.fps}, not using default')
-                    setattr(model, 'fps', dataset.fps)
-            elif getattr(model, 'nframe', 0) == 0:
-                raise ValueError(f'nframe is not suitable for {model_name}')
-            else:
-                setattr(model, 'fps', None)
+        # Skip sync for adaptive mode: per-sample structs carry fps/nframes
+        if not getattr(dataset, 'adaptive', False):
+            if getattr(model, 'nframe', None) is not None and getattr(model, 'nframe', 0) > 0:
+                if dataset.nframe > 0:
+                    if getattr(model, 'nframe', 0) != dataset.nframe:
+                        print(f'{model_name} is a video-llm model, nframe is set to {dataset.nframe}, not using default')
+                        setattr(model, 'nframe', dataset.nframe)
+                elif getattr(model, 'fps', 0) == 0:
+                    raise ValueError(f'fps is not suitable for {model_name}')
+                else:
+                    setattr(model, 'nframe', None)
+            if getattr(model, 'fps', None) is not None and getattr(model, 'fps', 0) > 0:
+                if dataset.fps > 0:
+                    if getattr(model, 'fps', 0) != dataset.fps:
+                        print(f'{model_name} is a video-llm model, fps is set to {dataset.fps}, not using default')
+                        setattr(model, 'fps', dataset.fps)
+                elif getattr(model, 'nframe', 0) == 0:
+                    raise ValueError(f'nframe is not suitable for {model_name}')
+                else:
+                    setattr(model, 'fps', None)
         if (
             'Qwen2-VL' in model_name
             or 'Qwen2.5-VL' in model_name
