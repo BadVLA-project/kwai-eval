@@ -329,9 +329,13 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                 # The config max_pixels (e.g. 16384*28*28) is for images only.
                 if self.total_pixels is not None:
                     item['total_pixels'] = self.total_pixels
-                if self.fps is not None:
+                # Per-struct fps/nframes (e.g. from adaptive sampling) take priority
+                for key in ['fps', 'nframes', 'sample_fps']:
+                    if key in s and s[key] is not None:
+                        item[key] = s[key]
+                if self.fps is not None and 'fps' not in item:
                     item['fps'] = self.fps
-                elif self.nframe is not None:
+                elif self.nframe is not None and 'nframes' not in item:
                     import cv2
                     video = cv2.VideoCapture(s['value'])
                     frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -415,9 +419,13 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                     # Don't set min/max_pixels for video — see _prepare_content
                     if self.total_pixels is not None:
                         item['total_pixels'] = self.total_pixels
-                    if self.fps is not None:
+                    # Per-struct fps/nframes (e.g. from adaptive sampling) take priority
+                    for key in ['fps', 'nframes', 'sample_fps']:
+                        if key in s and s[key] is not None:
+                            item[key] = s[key]
+                    if self.fps is not None and 'fps' not in item:
                         item['fps'] = self.fps
-                    elif self.nframe is not None:
+                    elif self.nframe is not None and 'nframes' not in item:
                         import cv2
                         video = cv2.VideoCapture(s['value'])
                         frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
