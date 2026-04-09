@@ -19,6 +19,7 @@ class ResultLoader:
         self._benchmarks = set()
         self._score_files = {}  # (model, benchmark) -> path
         self._model_colors = {}
+        self._model_configs = {}  # model -> config dict
         self._discover()
 
     # ── Auto-discovery ────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ class ResultLoader:
             for suffix, ext in SCORE_FILE_PATTERNS:
                 pattern = os.path.join(model_dir, f'*{suffix}.{ext}')
                 score_files.extend(glob.glob(pattern))
-                pattern = os.path.join(model_dir, 'T*_G*', f'*{suffix}.{ext}')
+                pattern = os.path.join(model_dir, 'T*', f'*{suffix}.{ext}')
                 score_files.extend(glob.glob(pattern))
 
             if not score_files:
@@ -60,6 +61,9 @@ class ResultLoader:
                     key = (entry, bench)
                     if key not in self._score_files or fpath > self._score_files[key]:
                         self._score_files[key] = fpath
+
+            # Load model config
+            self._model_configs[entry] = self._load_model_config(model_dir)
 
         self._benchmarks = sorted(self._benchmarks)
 
@@ -84,6 +88,27 @@ class ResultLoader:
 
         return name if name else None
 
+    @staticmethod
+    def _load_model_config(model_dir: str) -> dict | None:
+        """Load model_config.json from model_dir or its T* subdirs."""
+        # Direct path
+        direct = os.path.join(model_dir, 'model_config.json')
+        if os.path.exists(direct):
+            try:
+                with open(direct) as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        # T* subdir (pick the latest)
+        candidates = sorted(glob.glob(os.path.join(model_dir, 'T*', 'model_config.json')))
+        if candidates:
+            try:
+                with open(candidates[-1]) as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        return None
+
     # ── Public accessors ──────────────────────────────────────────────────
 
     @property
@@ -96,6 +121,9 @@ class ResultLoader:
 
     def model_color(self, model):
         return self._model_colors.get(model, '#888888')
+
+    def model_config(self, model):
+        return self._model_configs.get(model)
 
     # ── Score loading ─────────────────────────────────────────────────────
 
@@ -118,6 +146,9 @@ class ResultLoader:
                     if 'split' in df.columns and str(row.get('split', '')) not in ('Overall', 'nan', '') \
                     else str(row['category'])
                 result[key] = float(row['accuracy'])
+        elif 'metric' in df.columns and 'value' in df.columns:
+            for _, row in df.iterrows():
+                result[str(row['metric'])] = float(row['value'])
         return result
 
     @staticmethod
@@ -230,4 +261,27 @@ class ResultLoader:
         key = (model, benchmark)
         if key not in self._score_files:
             return None
-        return self._load_file(self._score_files[key])
+        data = self._load_file(self._score_files[key])
+        if data is None:
+            return None
+        # Flatten nested dicts for display; keep only numeric leaf values
+        flat = {}
+        self._flatten(data, '', flat)
+        return flat if flat else data
+
+    @staticmethod
+    def _flatten(obj, prefix, out):
+        """Recursively flatten nested dicts into dot-separated keys with numeric values."""
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                new_key = f'{prefix}{k}' if not prefix else f'{prefix}/{k}'
+                if isinstance(v, (int, float)):
+                    out[new_key] = round(float(v), 2)
+                elif isinstance(v, dict):
+                    ResultLoader._flatten(v, new_key, out)
+                elif isinstance(v, list) and len(v) == 3:
+                    # MVBench format: [correct, total, 'pct%']
+                    try:
+                        out[new_key] = float(str(v[2]).rstrip('%'))
+                    except (ValueError, IndexError):
+                        pass
