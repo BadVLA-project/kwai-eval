@@ -83,21 +83,38 @@ def count_nan_predictions(filepath):
     return len(df), int(nan_mask.sum()), nan_indices
 
 
-def rebuild_pkl_without_nans(workdir, xlsx_file, nan_indices):
+def rebuild_pkl_without_nans(workdir, xlsx_file, nan_indices, world_size=1):
     """Rebuild the per-rank pkl file, removing NaN entries so they get retried.
 
     The pkl files follow the naming pattern:
-        {rank}_{ModelName}_{DatasetName}.pkl
+        {rank}{world_size}_{ModelName}_{DatasetName}.pkl
+    The xlsx/jsonl result files must also be removed so that
+    infer_data_job_video() doesn't skip inference.
     """
     basename = osp.basename(xlsx_file)
     stem = basename.rsplit('.', 1)[0]  # e.g. Qwen3-VL-4B-Instruct_Video-MME_adaptive
 
-    # Look for existing pkl files
-    pkl_pattern = osp.join(workdir, f'*_{stem}.pkl')
-    pkl_files = sorted(glob.glob(pkl_pattern))
+    # Remove the xlsx and jsonl result files so inference doesn't skip
+    for ext in ['xlsx', 'jsonl']:
+        result_path = osp.join(workdir, f'{stem}.{ext}')
+        if osp.exists(result_path):
+            os.remove(result_path)
+            print(f'    Removed {stem}.{ext} (so inference will re-run)')
+
+    # Look for existing pkl files (pattern: {rank}{world_size}_{stem}.pkl)
+    pkl_files = []
+    for ws in range(1, 9):  # world_size 1-8
+        for r in range(ws):
+            p = osp.join(workdir, f'{r}{ws}_{stem}.pkl')
+            if osp.exists(p):
+                pkl_files.append(p)
+    # Also check old format: {rank}_{stem}.pkl
+    old_fmt = osp.join(workdir, f'0_{stem}.pkl')
+    if osp.exists(old_fmt) and old_fmt not in pkl_files:
+        pkl_files.append(old_fmt)
 
     if not pkl_files:
-        # No pkl files — need to create them from xlsx
+        # No pkl files — need to create them from xlsx (already read)
         # Read the xlsx to reconstruct the results dict
         df = pd.read_excel(xlsx_file)
         if 'index' not in df.columns or 'prediction' not in df.columns:
@@ -116,8 +133,8 @@ def rebuild_pkl_without_nans(workdir, xlsx_file, nan_indices):
                 continue
             res[idx] = str(pred)
 
-        # Save as single-rank pkl (rank 0)
-        pkl_path = osp.join(workdir, f'0_{stem}.pkl')
+        # Save as single-rank pkl with correct naming: {rank}{world_size}_{stem}.pkl
+        pkl_path = osp.join(workdir, f'0{world_size}_{stem}.pkl')
         with open(pkl_path, 'wb') as f:
             pickle.dump(res, f)
         print(f'  Created {osp.basename(pkl_path)}: {len(res)} valid, '
@@ -150,7 +167,15 @@ def main():
                         help='Just report NaN counts, do not modify files')
     parser.add_argument('--clean-scores', action='store_true',
                         help='Also delete *_score.* files for affected datasets')
+    parser.add_argument('--world-size', type=int, default=None,
+                        help='Number of GPU ranks (auto-detected from NGPU env var if not set)')
     args = parser.parse_args()
+
+    # Determine world_size for pkl naming
+    if args.world_size is not None:
+        world_size = args.world_size
+    else:
+        world_size = int(os.environ.get('NGPU', '1'))
 
     if not osp.isdir(args.workdir):
         print(f'ERROR: {args.workdir} is not a directory')
@@ -190,7 +215,8 @@ def main():
     for xlsx_path, nan_count, nan_indices in affected_datasets:
         basename = osp.basename(xlsx_path)
         print(f'\n  Processing {basename} ({nan_count} NaN samples):')
-        rebuild_pkl_without_nans(args.workdir, xlsx_path, nan_indices)
+        rebuild_pkl_without_nans(args.workdir, xlsx_path, nan_indices,
+                                world_size=world_size)
 
         if args.clean_scores:
             stem = basename.rsplit('.', 1)[0]
