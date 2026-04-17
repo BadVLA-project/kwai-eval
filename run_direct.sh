@@ -147,14 +147,17 @@ else
 fi
 
 # ===========================================================================
-# 7. Models (override with MODELS env var)
+# 7. Models (override with MODELS env var, or edit the list below)
 # ===========================================================================
 if [ -n "${MODELS:-}" ]; then
   # Parse space-separated MODELS env var into array
   read -ra MODEL_LIST <<< "${MODELS}"
 else
   MODEL_LIST=(
-    "${MODEL:-Qwen3-VL-4B-Instruct}"
+    Qwen3-VL-4B-Instruct
+    # Qwen3-VL-4B-Instruct_aot_v2t
+    # Qwen3-VL-4B-Instruct_aot_v2t_strict
+    # ---- uncomment models above or add your own ----
   )
 fi
 
