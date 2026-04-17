@@ -41,6 +41,10 @@ def _patch_qwen_vl_utils_no_torchvision_fallback():
 
 _patch_qwen_vl_utils_no_torchvision_fallback()
 
+# Silence per-video decord logs from qwen_vl_utils (very noisy in batch mode).
+logging.getLogger('qwen_vl_utils').setLevel(logging.WARNING)
+logging.getLogger('qwen_vl_utils.vision_process').setLevel(logging.WARNING)
+
 
 def is_moe_model(model_path: str) -> bool:
     """Check if the model is a MoE model by looking for active-param suffixes like A3B, A17B."""
@@ -966,7 +970,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 for item in (msg if isinstance(msg, list) else [])
                 if isinstance(item, dict) and item.get('type') == 'video'
             ]
-            logger.info(
+            logger.debug(
                 f'[vLLM rank={_rank}] starting chunk {chunk_start // chunk_size + 1}/{total_chunks} '
                 f'(samples {chunk_start}..{chunk_start + len(chunk) - 1}) '
                 f'videos={_chunk_videos[:3]}'
@@ -1043,7 +1047,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                     _free, _total = _torch.cuda.mem_get_info()
                     mem_used = (_total - _free) / 1e9
                     mem_total = _total / 1e9
-                    logger.info(
+                    logger.debug(
                         f'[vLLM rank={_rank}] chunk {chunk_start // chunk_size + 1}/{total_chunks}: '
                         f'{len(valid_reqs)} reqs, '
                         f'GPU mem used={mem_used:.1f}GB / total={mem_total:.1f}GB'
