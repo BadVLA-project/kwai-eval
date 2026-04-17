@@ -120,27 +120,31 @@ export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 export ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
 
 # ===========================================================================
-# 6. Datasets
+# 6. Datasets (override with DATA="ds1 ds2" env var)
 # ===========================================================================
-DATASETS=(
-  AoTBench_ReverseFilm_adaptive
-  AoTBench_UCF101_adaptive
-  AoTBench_Rtime_t2v_adaptive
-  AoTBench_Rtime_v2t_adaptive
-  AoTBench_QA_adaptive
-  FutureOmni_adaptive
-  CharadesTimeLens_adaptive
-  CharadesSTA_adaptive
-  MVBench_MP4_adaptive
-  PerceptionTest_val_adaptive
-  Video_Holmes_adaptive
-  Video-MME_adaptive
-  ETBench_adaptive
-  MLVU_MCQ_adaptive
-  TimeLensBench_Charades_adaptive
-  TimeLensBench_ActivityNet_adaptive
-  TimeLensBench_QVHighlights_adaptive
-)
+if [ -n "${DATA:-}" ]; then
+  read -ra DATASETS <<< "${DATA}"
+else
+  DATASETS=(
+    AoTBench_ReverseFilm_adaptive
+    AoTBench_UCF101_adaptive
+    AoTBench_Rtime_t2v_adaptive
+    AoTBench_Rtime_v2t_adaptive
+    AoTBench_QA_adaptive
+    FutureOmni_adaptive
+    CharadesTimeLens_adaptive
+    CharadesSTA_adaptive
+    MVBench_MP4_adaptive
+    PerceptionTest_val_adaptive
+    Video_Holmes_adaptive
+    Video-MME_adaptive
+    ETBench_adaptive
+    MLVU_MCQ_adaptive
+    TimeLensBench_Charades_adaptive
+    TimeLensBench_ActivityNet_adaptive
+    TimeLensBench_QVHighlights_adaptive
+  )
+fi
 
 # ===========================================================================
 # 7. Models (override with MODELS env var)
