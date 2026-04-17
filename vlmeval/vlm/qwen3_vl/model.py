@@ -169,7 +169,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             self.generate_kwargs.update(temperature=temp_val, do_sample=temp_val > 0)
 
         self.fps = kwargs.pop('fps', 2)
-        self.nframe = kwargs.pop('nframe', 128)
+        self.nframe = kwargs.pop('nframe', 256)
         self.FRAME_FACTOR = 2
         self.use_audio_in_video = use_audio_in_video
 
@@ -937,20 +937,6 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         """
         if chunk_size is None:
             chunk_size = int(os.environ.get('VLLM_BATCH_CHUNK_SIZE', '32'))
-        # Adaptive: cap chunk_size so total visual tokens stay manageable.
-        # ~200 tokens/frame; target ≤ 200k visual tokens per chunk.
-        max_visual_tokens_per_chunk = int(os.environ.get('VLLM_MAX_VISUAL_TOKENS_PER_CHUNK', '200000'))
-        tokens_per_sample = (self.nframe or 16) * 200
-        # Divide budget by world_size so all ranks combined stay within the limit.
-        world_size = int(os.environ.get('WORLD_SIZE', '1'))
-        adaptive_max = max(1, max_visual_tokens_per_chunk // (tokens_per_sample * world_size))
-        if chunk_size > adaptive_max:
-            import logging as _logging
-            _logging.info(
-                f'Adaptive chunk_size: {chunk_size} -> {adaptive_max} '
-                f'(nframe={self.nframe}, ~{tokens_per_sample} tokens/sample)'
-            )
-            chunk_size = adaptive_max
         from vllm import SamplingParams
         from tqdm import tqdm as _tqdm
         sampling_params = SamplingParams(
