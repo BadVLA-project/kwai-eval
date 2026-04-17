@@ -392,9 +392,12 @@ def main():
     # Also add to the 'RUN' logger directly because get_logger() sets
     # propagate=False, so messages from logger('RUN') never reach root.
     logger.addHandler(_global_log_handler)
-    # Ensure root logger level allows DEBUG through to file handler
-    # (StreamHandler level on each named logger still controls stderr output).
+    # Ensure root logger level allows DEBUG through to file handler,
+    # but keep stderr handlers at INFO to avoid flooding the terminal.
     logging.getLogger().setLevel(logging.DEBUG)
+    for _h in logging.getLogger().handlers:
+        if isinstance(_h, logging.StreamHandler) and not isinstance(_h, logging.FileHandler):
+            _h.setLevel(logging.INFO)
     logger.info(f'[DebugLog] Global debug log → {_global_log_path}')
 
     model = None
