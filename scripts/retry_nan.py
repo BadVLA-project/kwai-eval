@@ -94,10 +94,16 @@ def rebuild_pkl_without_nans(workdir, xlsx_file, nan_indices, world_size=1):
     basename = osp.basename(xlsx_file)
     stem = basename.rsplit('.', 1)[0]  # e.g. Qwen3-VL-4B-Instruct_Video-MME_adaptive
 
-    # Remove the xlsx and jsonl result files so inference doesn't skip
+    # Backup the xlsx and jsonl result files, then remove originals
+    # so inference doesn't skip. Backups allow recovery if retry fails.
     for ext in ['xlsx', 'jsonl']:
         result_path = osp.join(workdir, f'{stem}.{ext}')
         if osp.exists(result_path):
+            backup_path = result_path + '.bak'
+            if not osp.exists(backup_path):
+                import shutil
+                shutil.copy2(result_path, backup_path)
+                print(f'    Backed up {stem}.{ext} → {stem}.{ext}.bak')
             os.remove(result_path)
             print(f'    Removed {stem}.{ext} (so inference will re-run)')
 
