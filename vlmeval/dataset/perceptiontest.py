@@ -193,7 +193,13 @@ class PerceptionTest(VideoBaseDataset):
             sub_file = get_intermediate_file_path(eval_file, '_submission', 'json')
             submission = []
             for _, row in data.iterrows():
-                pred = str(row.get('prediction', '')).strip()
+                raw_pred = row.get('prediction', '')
+                if pd.isna(raw_pred):
+                    pred = ''
+                else:
+                    pred = str(raw_pred).strip()
+                    if pred.lower() == 'nan':
+                        pred = ''
                 pred_letter = extract_answer_from_cot(pred, valid_options='ABC')
                 pred_id = _OPTION_LETTERS.index(pred_letter) if pred_letter in _OPTION_LETTERS else -1
                 submission.append({
@@ -220,7 +226,19 @@ class PerceptionTest(VideoBaseDataset):
 
             unparsed_count = 0
             for idx, row in data.iterrows():
-                pred = str(row.get('prediction', '')).strip()
+                raw_pred = row.get('prediction', '')
+                # Treat pandas NaN / None / literal "nan" as missing
+                if pd.isna(raw_pred):
+                    data.loc[idx, 'score'] = -1
+                    data.loc[idx, 'extracted_answer'] = ''
+                    data.loc[idx, 'pred_id'] = -1
+                    continue
+                pred = str(raw_pred).strip()
+                if not pred or pred.lower() == 'nan':
+                    data.loc[idx, 'score'] = -1
+                    data.loc[idx, 'extracted_answer'] = ''
+                    data.loc[idx, 'pred_id'] = -1
+                    continue
                 pred_letter = extract_answer_from_cot(pred, valid_options='ABC')
                 if not pred_letter:
                     # Fallback: can_infer / GPT judge via extract_answer_from_item

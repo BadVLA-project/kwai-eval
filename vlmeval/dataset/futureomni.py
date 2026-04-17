@@ -140,10 +140,17 @@ class FutureOmni(VideoBaseDataset):
 
             unparsed_count = 0
             for idx, row in data.iterrows():
-                pred = str(row.get('prediction', '')).strip()
-                ans = str(row.get('answer', '')).strip().upper()
-                if not ans:
+                raw_pred = row.get('prediction', '')
+                # Treat pandas NaN / None / literal "nan" as missing
+                if pd.isna(raw_pred):
                     data.loc[idx, 'score'] = -1
+                    data.loc[idx, 'extracted_answer'] = ''
+                    continue
+                pred = str(raw_pred).strip()
+                ans = str(row.get('answer', '')).strip().upper()
+                if not ans or not pred or pred.lower() == 'nan':
+                    data.loc[idx, 'score'] = -1
+                    data.loc[idx, 'extracted_answer'] = ''
                     continue
                 pred_letter = extract_answer_from_cot(pred, valid_options='ABCDEF')
                 if not pred_letter:

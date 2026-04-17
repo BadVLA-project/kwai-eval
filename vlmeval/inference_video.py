@@ -141,6 +141,19 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     sample_map = {i: s for i, s in zip(sample_indices, samples)}
 
     sample_indices_sub = sample_indices[rank::world_size]
+    # Retry empty/failed predictions: treat '' (from SKIP_ERR) as incomplete
+    # so they get re-attempted on the next run.
+    retry_empty = os.environ.get('RETRY_EMPTY', '0') == '1'
+    if retry_empty:
+        _empty_count = sum(1 for idx in sample_indices_sub if idx in res and res[idx] == '')
+        if _empty_count > 0:
+            logging.info(
+                f'[rank={rank}] RETRY_EMPTY=1: found {_empty_count} empty predictions, '
+                f'will re-attempt them'
+            )
+            for idx in sample_indices_sub:
+                if idx in res and res[idx] == '':
+                    del res[idx]
     if np.all([idx in res for idx in sample_indices_sub]):
         return model
     sample_indices_subrem = [x for x in sample_indices_sub if x not in res]

@@ -66,7 +66,7 @@ python launch_workers.py \
   -- \
   run.py \
   --use-vllm \
-  --data MLVU_MCQ_64frame \
+  --data MLVU_MCQ_adaptive \
   --model Qwen3-VL-4B-Instruct \
   --work-dir "${WORK_DIR}" \
   2>&1 | tee "${LOG_FILE}"

@@ -977,13 +977,11 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             )
 
             # Build requests in parallel (video decoding is I/O + CPU bound).
-            # Guard with SIGALRM so a hung Ceph/decord read doesn't SIGKILL us.
-            # Use non-context-manager pool so we can shutdown(wait=False) on timeout.
-            import signal as _signal
+            # Use per-future timeouts so a hung Ceph/decord read only drops
+            # the affected sample(s), not the entire chunk.
             import threading as _threading
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
             _decode_timeout = int(os.environ.get('VLLM_DECODE_TIMEOUT', '120'))
-            _in_main = _threading.current_thread() is _threading.main_thread()
             valid_reqs = []
             valid_positions = []
             n_workers = min(len(chunk), int(os.environ.get('VLLM_BUILD_WORKERS', '8')))
@@ -992,47 +990,65 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 i, msg = idx_msg
                 return i, self._build_vllm_request(msg, dataset=dataset)
 
-            def _alarm_raise(signum, frame):
-                raise TimeoutError(
-                    f'[vLLM rank={_rank}] video decode stalled for '
-                    f'>{_decode_timeout}s, skipping chunk {chunk_start // chunk_size + 1}'
-                )
-
-            if _in_main:
-                _orig_handler = _signal.signal(_signal.SIGALRM, _alarm_raise)
-                _signal.alarm(_decode_timeout)
             _pool = ThreadPoolExecutor(max_workers=n_workers)
+            _timed_out_count = 0
             try:
                 _futures = {_pool.submit(_build_one, (i, msg)): i for i, msg in enumerate(chunk)}
-                for fut in as_completed(_futures):
-                    i = _futures[fut]
-                    try:
-                        _, req = fut.result()
-                        valid_reqs.append((i, req))
-                    except Exception as build_err:
-                        if not skip_err:
-                            raise
-                        import logging as _logging
-                        _logging.warning(
-                            f'generate_batch_vllm: _build_vllm_request failed '
-                            f'for sample {chunk_start + i}, skipping. Error: {build_err}'
+                # Wait for each future with a per-sample timeout.
+                # Collect completed ones; skip timed-out / failed ones.
+                _done_futures = set()
+                try:
+                    for fut in as_completed(_futures, timeout=_decode_timeout):
+                        _done_futures.add(fut)
+                        i = _futures[fut]
+                        try:
+                            _, req = fut.result()
+                            valid_reqs.append((i, req))
+                        except Exception as build_err:
+                            if not skip_err:
+                                raise
+                            import logging as _logging
+                            _logging.warning(
+                                f'generate_batch_vllm: _build_vllm_request failed '
+                                f'for sample {chunk_start + i}, skipping. Error: {build_err}'
+                            )
+                except FuturesTimeoutError:
+                    # Some futures didn't finish within the deadline.
+                    # Salvage whatever has already completed.
+                    _pending = set(_futures.keys()) - _done_futures
+                    _timed_out_count = len(_pending)
+                    _timed_out_indices = sorted(_futures[f] for f in _pending)
+                    logger.warning(
+                        f'[vLLM rank={_rank}] video decode timeout ({_decode_timeout}s) '
+                        f'in chunk {chunk_start // chunk_size + 1}/{total_chunks}: '
+                        f'{_timed_out_count} sample(s) timed out '
+                        f'(indices {_timed_out_indices}), '
+                        f'{len(valid_reqs)} sample(s) salvaged'
+                    )
+                    if not skip_err:
+                        raise TimeoutError(
+                            f'video decode stalled for >{_decode_timeout}s '
+                            f'in chunk {chunk_start // chunk_size + 1}'
                         )
-                _pool.shutdown(wait=True)
-            except TimeoutError as _te:
-                logger.warning(str(_te))
-                # Don't wait — threads may be blocked on hung Ceph I/O.
-                _pool.shutdown(wait=False, cancel_futures=True)
-                if not skip_err:
-                    raise
-                results.extend([''] * len(chunk))
-                continue
-            except Exception:
-                _pool.shutdown(wait=False)
-                raise
+                    # Also try to collect results from pending futures that
+                    # may have completed between the timeout and now.
+                    for fut in _pending:
+                        if fut.done():
+                            i = _futures[fut]
+                            try:
+                                _, req = fut.result()
+                                valid_reqs.append((i, req))
+                                _timed_out_count -= 1
+                            except Exception:
+                                pass
             finally:
-                if _in_main:
-                    _signal.alarm(0)
-                    _signal.signal(_signal.SIGALRM, _orig_handler)
+                # Don't wait for hung threads — they'll die with the process.
+                _pool.shutdown(wait=False, cancel_futures=True)
+            if _timed_out_count > 0:
+                logger.info(
+                    f'[vLLM rank={_rank}] chunk {chunk_start // chunk_size + 1}: '
+                    f'proceeding with {len(valid_reqs)}/{len(chunk)} decoded samples'
+                )
             # Sort by original position to maintain order.
             valid_reqs.sort(key=lambda x: x[0])
             valid_positions = [x[0] for x in valid_reqs]
