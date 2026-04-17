@@ -220,6 +220,10 @@ class LongVideoBench(VideoBaseDataset):
             indices = [int(i * step_size) for i in range(required_frames)]
             frame_paths = self.frame_paths_fps(video_path[:-4], len(indices))
 
+        # video_llm mode: frames are not needed, skip expensive decode + PNG save.
+        if video_llm:
+            return frame_paths, indices, video_info
+
         flag = np.all([osp.exists(p) for p in frame_paths])
 
         if not flag:
@@ -229,7 +233,7 @@ class LongVideoBench(VideoBaseDataset):
                     images = [vid[i].asnumpy() for i in indices]
                     images = [Image.fromarray(arr) for arr in images]
                     for im, pth in zip(images, frame_paths):
-                        if not osp.exists(pth) and not video_llm:
+                        if not osp.exists(pth):
                             im.save(pth)
 
         return frame_paths, indices, video_info

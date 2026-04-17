@@ -130,9 +130,10 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         if use_cot:
             self.temperature = 0.7
             self.do_sample = True
-            self.max_new_tokens = 2048
+            cot_max_tokens = int(os.environ.get('MAX_NEW_TOKENS', '512'))
+            self.max_new_tokens = cot_max_tokens
             self.generate_kwargs.update(
-                temperature=0.7, do_sample=True, max_new_tokens=2048
+                temperature=0.7, do_sample=True, max_new_tokens=cot_max_tokens
             )
             if cot_format == 'tags':
                 self.post_prompt = (
@@ -151,6 +152,13 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         else:
             self.post_prompt = 'Answer with the option letter only.'
             self.extract_think_answer = False
+            # Non-CoT MCQ: short answers only. Large max_new_tokens wastes
+            # KV-cache and cripples vLLM concurrency (e.g. 32768 → only 2-3
+            # sequences fit in memory). 128 tokens is plenty for option letters.
+            # Override via MAX_NEW_TOKENS env var if longer output is needed.
+            default_non_cot = int(os.environ.get('MAX_NEW_TOKENS', '128'))
+            self.max_new_tokens = default_non_cot
+            self.generate_kwargs['max_new_tokens'] = default_non_cot
 
         # TEMPERATURE env var allows overriding temperature independently of CoT.
         temp_override = os.environ.get('TEMPERATURE')

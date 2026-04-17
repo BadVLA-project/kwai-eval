@@ -193,6 +193,10 @@ class VideoMMEv2(VideoBaseDataset):
             indices = [int(i * step_size) for i in range(required_frames)]
             frame_paths = self.frame_paths_fps(video, len(indices))
 
+        # video_llm mode: frames are not needed, skip expensive decode + PNG save.
+        if video_llm:
+            return frame_paths, indices, video_info
+
         flag = np.all([osp.exists(p) for p in frame_paths])
 
         if not flag:

@@ -173,6 +173,11 @@ class Video_Holmes(VideoBaseDataset):
             frame_paths = self.frame_paths_fps(video, len(indices))
             _strategy = f'{self.fps}fps (dur={total_duration:.1f}s)'
 
+        # video_llm mode: frames are not needed, skip expensive decode + PNG save.
+        if video_llm:
+            logging.info(f'[frames] {video}: {len(indices)} frames ({_strategy}) [video_llm, skip decode]')
+            return frame_paths, indices, video_info
+
         flag = np.all([osp.exists(p) for p in frame_paths])
 
         if not flag:
