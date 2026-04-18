@@ -1103,11 +1103,12 @@ class ETBench(VideoBaseDataset):
             )
 
             rows = []
-            for sample in samples:
+            for global_idx, sample in enumerate(samples):
                 video_rel = sample['video']   # "qvhighlights/xxxxx.mp4"
                 video_id = osp.splitext(video_rel)[0].replace('/', '__').replace('\\', '__')
                 rows.append({
-                    'index':      sample['idx'],
+                    'index':      global_idx,
+                    'orig_idx':   sample['idx'],
                     'video':      video_id,
                     'video_path': video_rel,
                     'task':       sample['task'],

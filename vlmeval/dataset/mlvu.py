@@ -179,7 +179,11 @@ class MLVU_MCQ(VideoBaseDataset):
                         'video': video,
                         'question': str(row.get('question', '')),
                         'answer': answer,
-                        'candidates': candidates,
+                        # Ensure candidates is stored as a proper Python list repr
+                        # (with commas) so eval() in qa_template works correctly.
+                        # numpy arrays str() omit commas which causes eval to
+                        # concatenate adjacent string literals.
+                        'candidates': str(list(candidates)) if hasattr(candidates, '__iter__') and not isinstance(candidates, str) else str(candidates),  # noqa: E501
                     })
             if not self.data_list:
                 raise RuntimeError(f'No data loaded for {dataset_name}')
@@ -322,9 +326,9 @@ class MLVU_MCQ(VideoBaseDataset):
             data = load(eval_file)
             data_un = data[~pd.isna(data['prediction'])]
 
-            for idx in data['index']:
+            for idx in data_un['index']:
                 ans = data.loc[data['index'] == idx, 'answer'].values[0]
-                pred = data.loc[data['index'] == idx, 'prediction'].values[0]
+                pred = str(data.loc[data['index'] == idx, 'prediction'].values[0])
                 options = eval(data.loc[data['index'] == idx, 'candidates'].values[0])
                 answer_idx = -1
                 for id, c in enumerate(options):
@@ -345,6 +349,11 @@ class MLVU_MCQ(VideoBaseDataset):
                         input_item,
                         'MLVU_MCQ'
                     ))
+
+            # Assign -1 to samples with NaN predictions (not evaluated)
+            nan_mask = pd.isna(data['prediction'])
+            if nan_mask.any():
+                data.loc[nan_mask, 'score'] = -1
 
             rejected = [x for x in data['score'] if x == -1]
 

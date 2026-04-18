@@ -387,7 +387,7 @@ Based on your observations, select the best option that accurately addresses the
 
             for idx in data_un['index']:
                 ans = data.loc[data['index'] == idx, 'answer'].values[0]
-                pred = data.loc[data['index'] == idx, 'prediction'].values[0]
+                pred = str(data.loc[data['index'] == idx, 'prediction'].values[0])
                 options = eval(data.loc[data['index'] == idx, 'candidates'].values[0])
                 answer_idx = -1
                 for id, c in enumerate(options):
@@ -408,6 +408,11 @@ Based on your observations, select the best option that accurately addresses the
                         input_item,
                         'MVBench'
                     ))
+
+            # Assign -1 to samples with NaN predictions (not evaluated)
+            nan_mask = pd.isna(data['prediction'])
+            if nan_mask.any():
+                data.loc[nan_mask, 'score'] = -1
 
             rejected = [x for x in data['score'] if x == -1]
 
@@ -645,7 +650,7 @@ Based on your observations, select the best option that accurately addresses the
 
             for idx in data_un['index']:
                 ans = data.loc[data['index'] == idx, 'answer'].values[0]
-                pred = data.loc[data['index'] == idx, 'prediction'].values[0]
+                pred = str(data.loc[data['index'] == idx, 'prediction'].values[0])
                 options = eval(data.loc[data['index'] == idx, 'candidates'].values[0])
                 answer_idx = -1
                 for id, c in enumerate(options):
@@ -666,6 +671,11 @@ Based on your observations, select the best option that accurately addresses the
                         input_item,
                         'MVBench_MP4'
                     ))
+
+            # Assign -1 to samples with NaN predictions (not evaluated)
+            nan_mask = pd.isna(data['prediction'])
+            if nan_mask.any():
+                data.loc[nan_mask, 'score'] = -1
 
             rejected = [x for x in data['score'] if x == -1]
 
