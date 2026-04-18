@@ -45,17 +45,17 @@ export USE_COT=0
 export TEMPERATURE=0
 export TIMELENS_EVAL_MODE=timelens
 
-NGPU=2
+NGPU=1
 GPU_OFFSET=0
 
 # ---------------------------------------------------------------------------
 # vLLM settings for 80GB GPUs
 # 8-GPU note: reduce VLLM_BUILD_WORKERS to avoid CPU oversubscription
 # ---------------------------------------------------------------------------
-export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-16}"
-export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-16}"
+export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-32}"
+export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-32}"
 export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.70}"
-export VLLM_BUILD_WORKERS="${VLLM_BUILD_WORKERS:-2}"
+export VLLM_BUILD_WORKERS="${VLLM_BUILD_WORKERS:-8}"
 
 # ---------------------------------------------------------------------------
 # HF / offline settings
@@ -77,35 +77,33 @@ export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 export ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
 
 # ---------------------------------------------------------------------------
-# Datasets & Model
+# Datasets & Model (override with DATA="ds1 ds2" env var)
 # ---------------------------------------------------------------------------
-DATASETS=(
-  AoTBench_ReverseFilm_adaptive
-  AoTBench_UCF101_adaptive
-  AoTBench_Rtime_t2v_adaptive
-  AoTBench_Rtime_v2t_adaptive
-  AoTBench_QA_adaptive
-  FutureOmni_adaptive
-  CharadesTimeLens_adaptive
-  CharadesSTA_adaptive
-  MVBench_MP4_adaptive
-  PerceptionTest_val_adaptive
-  Video_Holmes_adaptive
-  Video-MME_adaptive
-  ETBench_adaptive
-  MLVU_MCQ_adaptive
-  TimeLensBench_Charades_adaptive
-  TimeLensBench_ActivityNet_adaptive
-  TimeLensBench_QVHighlights_adaptive
-)
+if [ -n "${DATA:-}" ]; then
+  read -ra DATASETS <<< "${DATA}"
+else
+  DATASETS=(
+    Video-MME_adaptive
+    AoTBench_ReverseFilm_adaptive
+    AoTBench_UCF101_adaptive
+    AoTBench_Rtime_t2v_adaptive
+    AoTBench_Rtime_v2t_adaptive
+    AoTBench_QA_adaptive
+    MVBench_MP4_adaptive
+    Video_Holmes_adaptive
+    TimeLensBench_Charades_adaptive
+    TimeLensBench_ActivityNet_adaptive
+    TimeLensBench_QVHighlights_adaptive
+  )
+fi
 
 MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"
 
 MODELS=(
-  Qwen3-VL-4B-Instruct_aot_v2t
+  Qwen3-VL-4B-Instruct
 )
 
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_2gpu}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct}"
 
 # ---------------------------------------------------------------------------
 # Launch
