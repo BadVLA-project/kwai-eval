@@ -25,9 +25,26 @@ if [[ "${1:-}" == "--execute" ]]; then
 fi
 
 WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct}"
-MODEL="${MODEL:-Qwen3-VL-4B-Instruct}"
 MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
+
+# Auto-detect all model directories, or override with MODELS="m1 m2"
+if [[ -n "${MODELS:-}" ]]; then
+  read -ra MODEL_LIST <<< "${MODELS}"
+else
+  MODEL_LIST=()
+  if [[ -d "${WORK_DIR}" ]]; then
+    for d in "${WORK_DIR}"/*/; do
+      [[ -d "$d" ]] || continue
+      MODEL_LIST+=("$(basename "$d")")
+    done
+  fi
+fi
+
+if [[ ${#MODEL_LIST[@]} -eq 0 ]]; then
+  echo "  [ERROR] 没有找到模型目录。请设置 MODELS 环境变量。"
+  exit 1
+fi
 
 # Datasets whose TSV + predictions are buggy (prompt was wrong)
 BUGGY_DATASETS=(MLVU_MCQ ETBench)
@@ -39,7 +56,7 @@ BUGGY_PRED_PATTERNS=(MLVU_MCQ ETBench)
 echo "=================================================================="
 echo " rerun_fixed.sh — 修复后重跑流程"
 echo "   WORK_DIR:  ${WORK_DIR}"
-echo "   MODEL:     ${MODEL}"
+echo "   MODELS:    ${MODEL_LIST[*]}"
 echo "   DRY_RUN:   ${DRY_RUN} (用 --execute 实际执行)"
 echo "=================================================================="
 
@@ -80,32 +97,33 @@ done
 echo ""
 echo "=== Step 2: 删除 ETBench/MLVU 的旧推理结果 ==="
 
-MODEL_DIR="${WORK_DIR}/${MODEL}"
-if [[ -d "${MODEL_DIR}" ]]; then
-  # Find all eval_id directories
-  for eval_dir in "${MODEL_DIR}"/T*; do
-    [[ -d "${eval_dir}" ]] || continue
-    for pattern in "${BUGGY_PRED_PATTERNS[@]}"; do
-      # Match prediction files: Model_MLVU_MCQ*.xlsx, Model_MLVU_MCQ*.jsonl, etc.
-      matches=()
-      while IFS= read -r -d '' f; do
-        matches+=("$f")
-      done < <(find "${eval_dir}" -maxdepth 1 -name "${MODEL}_${pattern}*" -print0 2>/dev/null)
+for MODEL in "${MODEL_LIST[@]}"; do
+  echo "  --- Model: ${MODEL} ---"
+  MODEL_DIR="${WORK_DIR}/${MODEL}"
+  if [[ -d "${MODEL_DIR}" ]]; then
+    for eval_dir in "${MODEL_DIR}"/T*; do
+      [[ -d "${eval_dir}" ]] || continue
+      for pattern in "${BUGGY_PRED_PATTERNS[@]}"; do
+        matches=()
+        while IFS= read -r -d '' f; do
+          matches+=("$f")
+        done < <(find "${eval_dir}" -maxdepth 1 -name "${MODEL}_${pattern}*" -print0 2>/dev/null)
 
-      if [[ ${#matches[@]} -gt 0 ]]; then
-        for f in "${matches[@]}"; do
-          if [[ "${DRY_RUN}" == "1" ]]; then
-            echo "  [DELETE] ${f}"
-          else
-            rm -v "${f}"
-          fi
-        done
-      fi
+        if [[ ${#matches[@]} -gt 0 ]]; then
+          for f in "${matches[@]}"; do
+            if [[ "${DRY_RUN}" == "1" ]]; then
+              echo "  [DELETE] ${f}"
+            else
+              rm -v "${f}"
+            fi
+          done
+        fi
+      done
     done
-  done
-else
-  echo "  [SKIP] ${MODEL_DIR} 不存在"
-fi
+  else
+    echo "  [SKIP] ${MODEL_DIR} 不存在"
+  fi
+done
 
 # -----------------------------------------------------------------------
 # Step 3: 用 REUSE=1 跑全部数据集
@@ -115,6 +133,9 @@ echo "=== Step 3: REUSE=1 跑全部数据集 ==="
 echo "  已完成且无 bug 的数据集 → 自动复用推理结果"
 echo "  ETBench/MLVU → 重新推理 (旧结果已删)"
 echo "  未完成的 → 继续跑"
+echo ""
+echo "  注意: Step 3 只跑 run_direct_2gpu.sh 里配置的模型。"
+echo "  如需跑其他模型，修改 run_direct_2gpu.sh 的 MODELS 或用 MODEL=xxx 环境变量。"
 echo ""
 
 if [[ "${DRY_RUN}" == "1" ]]; then
