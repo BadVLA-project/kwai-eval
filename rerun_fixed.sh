@@ -29,6 +29,8 @@ MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
 
 # Auto-detect all model directories, or override with MODELS="m1 m2"
+# Only directories containing T* eval subdirs are real model dirs
+# (filters out dataset symlinks like AoTBench_QA_adaptive, etc.)
 if [[ -n "${MODELS:-}" ]]; then
   read -ra MODEL_LIST <<< "${MODELS}"
 else
@@ -36,7 +38,18 @@ else
   if [[ -d "${WORK_DIR}" ]]; then
     for d in "${WORK_DIR}"/*/; do
       [[ -d "$d" ]] || continue
-      MODEL_LIST+=("$(basename "$d")")
+      name="$(basename "$d")"
+      # Real model dirs have T* subdirectories (e.g. T20260418/)
+      has_eval_dir=false
+      for sub in "$d"/T*/; do
+        if [[ -d "$sub" ]]; then
+          has_eval_dir=true
+          break
+        fi
+      done
+      if $has_eval_dir; then
+        MODEL_LIST+=("$name")
+      fi
     done
   fi
 fi
