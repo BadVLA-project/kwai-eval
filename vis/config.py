@@ -20,3 +20,14 @@ SCORE_FILE_PATTERNS = [
     ('_rating', 'json'),
     ('_score', 'json'),
 ]
+
+# Benchmark prefixes whose sub-benchmarks should be merged into one column
+MERGE_PREFIXES = ['AoTBench']
+
+# ETBench aggregation groups: group_name -> {key, tasks}
+ETBENCH_GROUPS = {
+    'REF': {'key': 'REF/Acc', 'tasks': ['RAR/Acc', 'ECA/Acc', 'RVQ/Acc']},
+    'GND': {'key': 'GND/F1', 'tasks': ['TVG/F1', 'EPM/F1', 'TAL/F1', 'EVS/F1', 'VHD/F1']},
+    'CAP': {'key': 'CAP/F1', 'tasks': ['DVC/F1', 'DVC/Sim', 'SLC/F1', 'SLC/Sim']},
+    'COM': {'key': 'COM/mRec', 'tasks': ['TEM/Rec', 'GVQ/Rec']},
+}

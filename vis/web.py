@@ -162,7 +162,17 @@ table.config-table td.diff { background:#fff3cd; }
 <div class="content">
   <!-- Tab 1: Score Table -->
   <div id="tab-table">
-    <div class="table-wrap" id="score-table-wrap"></div>
+    <div class="table-layout" style="display:flex;gap:16px;">
+      <div class="table-sidebar" style="width:240px;flex-shrink:0;background:#fff;border-radius:8px;padding:12px;overflow-y:auto;max-height:calc(100vh - 120px);box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+        <div class="sidebar-section">
+          <h3>Models <span class="btn-group"><button onclick="toggleAllTable(true)">All</button><button onclick="toggleAllTable(false)">None</button></span></h3>
+          <div class="check-list" id="table-model-checks"></div>
+        </div>
+      </div>
+      <div style="flex:1;overflow:hidden;">
+        <div class="table-wrap" id="score-table-wrap"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Tab 2: Model Config -->
@@ -223,6 +233,23 @@ let sortCol = null;
 let sortAsc = true;
 let expandedCell = null;  // {model, bench} or null
 let breakdownCharts = {};
+let selectedTableModels = new Set(models.map(m => m.key));
+
+// ETBench expand/collapse: detect parent/child benchmarks
+const benchParents = {};  // 'ETBench/REF' -> 'ETBench'
+const benchChildren = {};  // 'ETBench' -> ['ETBench/REF', ...]
+benchmarks.forEach(b => {
+  const slash = b.indexOf('/');
+  if (slash > 0) {
+    const parent = b.substring(0, slash);
+    if (benchmarks.includes(parent)) {
+      benchParents[b] = parent;
+      if (!benchChildren[parent]) benchChildren[parent] = [];
+      benchChildren[parent].push(b);
+    }
+  }
+});
+let expandedParents = new Set();  // which parents show children
 
 // ── Tab switching ──
 function switchTab(tab) {
@@ -253,7 +280,7 @@ function configBadges(model) {
 }
 
 function renderTable() {
-  let modelKeys = models.map(m => m.key);
+  let modelKeys = models.map(m => m.key).filter(m => selectedTableModels.has(m));
 
   if (sortCol !== null && sortCol !== '__avg__') {
     modelKeys.sort((a, b) => {
@@ -270,16 +297,26 @@ function renderTable() {
   }
 
   const colMin = {}, colMax = {};
-  benchmarks.forEach(b => {
+  // Filter benchmarks: hide children of collapsed parents, hide parent when expanded
+  const visibleBench = benchmarks.filter(b => {
+    if (benchParents[b]) return expandedParents.has(benchParents[b]);
+    if (benchChildren[b]) return !expandedParents.has(b);
+    return true;
+  });
+  visibleBench.forEach(b => {
     let vals = modelKeys.map(m => scores[m]?.[b]).filter(v => v != null);
     colMin[b] = vals.length ? Math.min(...vals) : 0;
     colMax[b] = vals.length ? Math.max(...vals) : 100;
   });
 
   let h = '<table class="score-table"><thead><tr><th>Model</th>';
-  benchmarks.forEach(b => {
+  visibleBench.forEach(b => {
     const arrow = sortCol === b ? (sortAsc ? ' ▲' : ' ▼') : '';
-    h += `<th onclick="sortTable('${esc(b)}')">${b}${arrow}</th>`;
+    const hasChildren = benchChildren[b] != null;
+    const isChild = benchParents[b] != null;
+    const toggle = (hasChildren || isChild) ? ` ondblclick="toggleParent('${esc(hasChildren ? b : benchParents[b])}')"` : '';
+    const icon = hasChildren ? ' ▸' : (isChild ? '' : '');
+    h += `<th onclick="sortTable('${esc(b)}')"${toggle}>${b}${icon}${arrow}</th>`;
   });
   h += '<th onclick="sortTable(\'__avg__\')">Avg' + (sortCol === '__avg__' ? (sortAsc ? ' ▲' : ' ▼') : '') + '</th>';
   h += '</tr></thead><tbody>';
@@ -288,7 +325,7 @@ function renderTable() {
     h += '<tr>';
     h += `<td class="model-name">${m}${configBadges(m)}</td>`;
     let sum = 0, cnt = 0;
-    benchmarks.forEach(b => {
+    visibleBench.forEach(b => {
       const v = scores[m]?.[b];
       if (v != null) {
         const range = colMax[b] - colMin[b];
@@ -296,7 +333,7 @@ function renderTable() {
         const bg = heatColor(ratio);
         const hasBd = breakdowns[m]?.[b] != null;
         const cls = hasBd ? 'clickable' : '';
-        h += `<td class="${cls}" style="background:${bg}" ${hasBd ? `onclick="toggleBreakdown('${esc(m)}','${esc(b)}')"` : ''}>${v.toFixed(1)}</td>`;
+        h += `<td class="${cls}" style="color:${bg};font-weight:600" ${hasBd ? `onclick="toggleBreakdown('${esc(m)}','${esc(b)}')"` : ''}>${v.toFixed(1)}</td>`;
         sum += v; cnt++;
       } else {
         h += '<td style="color:#ccc">\u2014</td>';
@@ -311,7 +348,7 @@ function renderTable() {
       const bd = breakdowns[m]?.[expandedCell.bench];
       if (bd) {
         h += `<tr class="breakdown-row" id="bd-row-${esc(m)}">`;
-        h += `<td colspan="${benchmarks.length + 2}">`;
+        h += `<td colspan="${visibleBench.length + 2}">`;
         h += `<strong>${expandedCell.bench}</strong> breakdown for ${m}`;
         h += `<div class="breakdown-chart" id="bd-chart-${esc(m)}-${esc(expandedCell.bench)}"></div>`;
         h += '</td></tr>';
@@ -363,9 +400,19 @@ function calcAvg(m) {
 }
 
 function heatColor(ratio) {
-  const r = Math.round(255 * (1 - ratio) * 0.8 + 240 * 0.2);
-  const g = Math.round(255 * ratio * 0.7 + 240 * 0.3);
-  const b = Math.round(240 * 0.3);
+  // Text color gradient: red (#cf222e) → amber (#9a6700) → green (#1a7f37)
+  let r, g, b;
+  if (ratio < 0.5) {
+    const t = ratio * 2;
+    r = Math.round(207 + (154 - 207) * t);
+    g = Math.round(34 + (103 - 34) * t);
+    b = Math.round(46 + (0 - 46) * t);
+  } else {
+    const t = (ratio - 0.5) * 2;
+    r = Math.round(154 + (26 - 154) * t);
+    g = Math.round(103 + (127 - 103) * t);
+    b = Math.round(0 + (55 - 0) * t);
+  }
   return `rgb(${r},${g},${b})`;
 }
 
@@ -375,7 +422,40 @@ function sortTable(col) {
   renderTable();
 }
 
+function toggleParent(parent) {
+  if (expandedParents.has(parent)) expandedParents.delete(parent);
+  else expandedParents.add(parent);
+  renderTable();
+}
+
 function esc(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+function initTableSidebar() {
+  let h = '';
+  models.forEach(m => {
+    h += `<label class="check-item">
+      <input type="checkbox" checked onchange="toggleTableModel('${esc(m.key)}')" data-group="tablemodel" data-key="${m.key}">
+      <span class="dot" style="background:${m.color}"></span>
+      <span>${m.key}</span>
+    </label>`;
+  });
+  document.getElementById('table-model-checks').innerHTML = h;
+}
+
+function toggleTableModel(key) {
+  if (selectedTableModels.has(key)) selectedTableModels.delete(key);
+  else selectedTableModels.add(key);
+  renderTable();
+}
+
+function toggleAllTable(state) {
+  document.querySelectorAll('input[data-group="tablemodel"]').forEach(cb => {
+    cb.checked = state;
+    const key = cb.dataset.key;
+    state ? selectedTableModels.add(key) : selectedTableModels.delete(key);
+  });
+  renderTable();
+}
 
 // ═══════════════════════════════════════════════════════
 //  TAB 2: Model Config
@@ -558,6 +638,7 @@ function renderBar(selModels, selBench) {
 // ── Init ──
 window.addEventListener('resize', () => { if (chartInstance) chartInstance.resize(); });
 renderTable();
+initTableSidebar();
 initSidebar();
 initConfigSidebar();
 </script>
