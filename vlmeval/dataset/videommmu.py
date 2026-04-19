@@ -587,7 +587,10 @@ class VideoMMMU(VideoBaseDataset):
             'fps': vid.get_avg_fps(),
             'n_frames': len(vid),
         }
-        if self.nframe > 0 and self.fps < 0:
+        if self.adaptive:
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self.frame_paths_adaptive(id_, len(indices))
+        elif self.nframe > 0 and self.fps < 0:
             step_size = len(vid) / (self.nframe + 1)
             indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
             frame_paths = self.frame_paths(id_)
@@ -597,6 +600,11 @@ class VideoMMMU(VideoBaseDataset):
             required_frames = int(total_duration * self.fps)
             step_size = video_info['fps'] / self.fps
             indices = [int(i * step_size) for i in range(required_frames)]
+            frame_paths = self.frame_paths_fps(id_, len(indices))
+        else:
+            # fallback: uniform 16 frames
+            step_size = len(vid) / 17
+            indices = [int(i * step_size) for i in range(1, 17)]
             frame_paths = self.frame_paths_fps(id_, len(indices))
 
         # video_llm mode: frames are not needed, skip expensive decode + PNG save.
