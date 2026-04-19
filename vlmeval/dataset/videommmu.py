@@ -477,94 +477,102 @@ class VideoMMMU(VideoBaseDataset):
                     return False
             return True
 
-        cache_path = get_cache_path(repo_id)
-        if cache_path is not None and check_integrity(cache_path):
-            dataset_path = cache_path
-        else:
+        def unzip_hf_zip(pth):
+            import zipfile
+            base_dir = Path(pth)
+            target_dir = base_dir / 'videos'
+            target_dir.mkdir(exist_ok=True)
+            zip_files = sorted(base_dir.glob('*.zip'))
 
-            def unzip_hf_zip(pth):
-                import zipfile
-                base_dir = Path(pth)
-                target_dir = base_dir / 'videos'
-                target_dir.mkdir(exist_ok=True)
-                zip_files = sorted(base_dir.glob('*.zip'))
-
-                if not target_dir.exists():
-                    for zip_file in zip_files:
-                        with zipfile.ZipFile(str(zip_file), 'r') as zip_ref:
-                            for member in zip_ref.namelist():
-                                # Check if the member is a file (not a directory)
-                                if not member.endswith(
-                                        '/') and not member.startswith('__'):
-                                    # Extract the file to the specified directory
-                                    source = zip_ref.open(member)
-                                    target = target_dir / member
-                                    target.parent.mkdir(exist_ok=True)
-                                    if not target.exists():
-                                        with source, open(target, 'wb'):
-                                            target.write(source.read())
-                    print(
-                        'The video file has been restored and stored from the zip file.'
-                    )
-                else:
-                    print('The video file already exists.')
-
-            def generate_tsv(pth):
-
-                data_file = Path(pth) / f'{dataset_name}.tsv'
-                if data_file.exists() and (not self.MD5
-                                           or md5(data_file) == self.MD5):
-                    return
-
-                sub_dfs = []
-                for parquet_file in sorted(Path(pth).glob('**/*.parquet')):
-                    df = pd.read_parquet(parquet_file)
-                    rows = []
-                    for _, row in df.iterrows():
-                        videos = Path(pth).glob(f'videos/**/{row["id"]}.mp4')
-                        video_pth = next(p for p in videos
-                                         if 'question_only' not in str(p))
-                        options = json.dumps(row['options'].tolist(),
-                                             ensure_ascii=False)
-                        row_data = {
-                            'id': row['id'],
-                            'question': row['question'],
-                            'answer': row['answer'],
-                            'options': options,
-                            'question_type': row['question_type'],
-                            'video': str(video_pth.relative_to(pth)),
-                        }
-                        if 'image' in df.columns:
-                            image = Image.open(
-                                io.BytesIO(row['image']['bytes']))
-                            image_path = Path(
-                                pth) / 'images' / row['image']['path']
-                            image_path.parent.mkdir(exist_ok=True)
-                            if not image_path.exists():
-                                image.save(str(image_path))
-                            row_data[
-                                'image'] = f"images/{row['image']['path']}"
-                        rows.append(row_data)
-                    new_df = pd.DataFrame(rows)
-                    new_df['category'] = parquet_file.parent.name
-                    sub_dfs.append(new_df)
-                cols = [
-                    'id', 'category', 'question', 'options', 'answer',
-                    'question_type', 'video', 'image'
-                ]
-                df = pd.concat(
-                    sub_dfs,
-                    ignore_index=True).reindex(columns=cols).reset_index()
-                df.to_csv(data_file, sep='\t', index=False)
-
-            if modelscope_flag_set():
-                from modelscope import dataset_snapshot_download
-                dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+            if not target_dir.exists():
+                for zip_file in zip_files:
+                    with zipfile.ZipFile(str(zip_file), 'r') as zip_ref:
+                        for member in zip_ref.namelist():
+                            # Check if the member is a file (not a directory)
+                            if not member.endswith(
+                                    '/') and not member.startswith('__'):
+                                # Extract the file to the specified directory
+                                source = zip_ref.open(member)
+                                target = target_dir / member
+                                target.parent.mkdir(exist_ok=True)
+                                if not target.exists():
+                                    with source, open(target, 'wb'):
+                                        target.write(source.read())
+                print(
+                    'The video file has been restored and stored from the zip file.'
+                )
             else:
-                dataset_path = snapshot_download(repo_id=repo_id,
-                                                 repo_type='dataset')
+                print('The video file already exists.')
+
+        def generate_tsv(pth):
+
+            data_file = Path(pth) / f'{dataset_name}.tsv'
+            if data_file.exists() and (not self.MD5
+                                       or md5(data_file) == self.MD5):
+                return
+
+            sub_dfs = []
+            for parquet_file in sorted(Path(pth).glob('**/*.parquet')):
+                df = pd.read_parquet(parquet_file)
+                rows = []
+                for _, row in df.iterrows():
+                    videos = Path(pth).glob(f'videos/**/{row["id"]}.mp4')
+                    video_pth = next(p for p in videos
+                                     if 'question_only' not in str(p))
+                    options = json.dumps(row['options'].tolist(),
+                                         ensure_ascii=False)
+                    row_data = {
+                        'id': row['id'],
+                        'question': row['question'],
+                        'answer': row['answer'],
+                        'options': options,
+                        'question_type': row['question_type'],
+                        'video': str(video_pth.relative_to(pth)),
+                    }
+                    if 'image' in df.columns:
+                        image = Image.open(
+                            io.BytesIO(row['image']['bytes']))
+                        image_path = Path(
+                            pth) / 'images' / row['image']['path']
+                        image_path.parent.mkdir(exist_ok=True)
+                        if not image_path.exists():
+                            image.save(str(image_path))
+                        row_data[
+                            'image'] = f"images/{row['image']['path']}"
+                    rows.append(row_data)
+                new_df = pd.DataFrame(rows)
+                new_df['category'] = parquet_file.parent.name
+                sub_dfs.append(new_df)
+            cols = [
+                'id', 'category', 'question', 'options', 'answer',
+                'question_type', 'video', 'image'
+            ]
+            df = pd.concat(
+                sub_dfs,
+                ignore_index=True).reindex(columns=cols).reset_index()
+            df.to_csv(data_file, sep='\t', index=False)
+
+        # === LOCAL PATH PRIORITY ===
+        local_target_path = '/m2v_intern/xuboshen/zgw/Benchmarks/VideoMMMU'
+
+        if os.path.exists(local_target_path):
+            print(f'Loading VideoMMMU from local path: {local_target_path}')
+            dataset_path = local_target_path
             unzip_hf_zip(dataset_path)
             generate_tsv(dataset_path)
+        else:
+            cache_path = get_cache_path(repo_id)
+            if cache_path is not None and check_integrity(cache_path):
+                dataset_path = cache_path
+            else:
+                if modelscope_flag_set():
+                    from modelscope import dataset_snapshot_download
+                    dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+                else:
+                    dataset_path = snapshot_download(repo_id=repo_id,
+                                                     repo_type='dataset')
+                unzip_hf_zip(dataset_path)
+                generate_tsv(dataset_path)
 
         data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
 
