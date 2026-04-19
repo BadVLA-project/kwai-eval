@@ -619,7 +619,7 @@ function renderRadar(selModels, selBench) {
     radar: { indicator: indicators, radius: '60%', nameGap: 8, axisName: { fontSize: 11 } },
     series: [{ type: 'radar', data: selModels.map(m => ({
       name: m.key,
-      value: selBench.map(b => scores[m.key]?.[b] ?? 0),
+      value: selBench.map(b => scores[m.key]?.[b] ?? null),
       lineStyle: { width: 2 },
       areaStyle: { opacity: 0.1 },
       itemStyle: { color: m.color },
@@ -636,7 +636,7 @@ function renderBar(selModels, selBench) {
     yAxis: { type: 'value', name: 'Score' },
     series: selModels.map(m => ({
       name: m.key, type: 'bar',
-      data: selBench.map(b => scores[m.key]?.[b] ?? 0),
+      data: selBench.map(b => scores[m.key]?.[b] ?? null),
       itemStyle: { color: m.color },
     })),
   });
