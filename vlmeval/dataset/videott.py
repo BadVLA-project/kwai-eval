@@ -67,59 +67,68 @@ Respond with only the letter (A, B, C, or D) of the correct option.
                     return False
             return True
 
-        cache_path = get_cache_path(repo_id)
-        if cache_path is not None and check_integrity(cache_path):
-            dataset_path = cache_path
-        else:
+        def unzip_hf_zip(pth):
+            import zipfile
+            base_dir = pth
+            target_dir = os.path.join(pth, 'video/')
+            zip_files = [
+                os.path.join(base_dir, file) for file in os.listdir(base_dir)
+                if file.endswith('.zip') and file.startswith('Benchmark-AllVideos-LQ')
+            ]
+            zip_files.sort()
 
-            def unzip_hf_zip(pth):
-                import zipfile
-                base_dir = pth
-                target_dir = os.path.join(pth, 'video/')
-                zip_files = [
-                    os.path.join(base_dir, file) for file in os.listdir(base_dir)
-                    if file.endswith('.zip') and file.startswith('Benchmark-AllVideos-LQ')
-                ]
-                zip_files.sort()
-
-                if not os.path.exists(target_dir):
-                    os.makedirs(target_dir, exist_ok=True)
-                    for zip_file in zip_files:
-                        with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                            for member in zip_ref.namelist():
-                                # Check if the member is a file (not a directory)
-                                if not member.endswith('/'):
-                                    # Extract the file to the specified directory
-                                    source = zip_ref.open(member)
-                                    target = open(os.path.join(target_dir, os.path.basename(member)), 'wb')
-                                    with source, target:
-                                        target.write(source.read())
-                    print('The video file has been restored and stored from the zip file.')
-                else:
-                    print('The video file already exists.')
-
-            def generate_tsv(pth):
-                data_file = osp.join(pth, f'{dataset_name}.tsv')
-                if os.path.exists(data_file) and md5(data_file) == self.MD5:
-                    return
-
-                data_file = pd.read_parquet(os.path.join(pth, 'data/test-00000-of-00001.parquet'))
-                data_file = data_file.assign(index=range(len(data_file)))
-                data_file['video'] = data_file['video_id']
-                data_file['video_path'] = data_file['video_id'].apply(lambda x: f'./video/{x}.mp4')
-
-                data_file = data_file[['index', 'video', 'video_path', 'duration', 'question', 'question_prompt',
-                                       'capability', 'answer']]
-
-                data_file.to_csv(osp.join(pth, f'{dataset_name}.tsv'), sep='\t', index=False)
-
-            if modelscope_flag_set():
-                from modelscope import dataset_snapshot_download
-                dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+            if not os.path.exists(target_dir):
+                os.makedirs(target_dir, exist_ok=True)
+                for zip_file in zip_files:
+                    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                        for member in zip_ref.namelist():
+                            # Check if the member is a file (not a directory)
+                            if not member.endswith('/'):
+                                # Extract the file to the specified directory
+                                source = zip_ref.open(member)
+                                target = open(os.path.join(target_dir, os.path.basename(member)), 'wb')
+                                with source, target:
+                                    target.write(source.read())
+                print('The video file has been restored and stored from the zip file.')
             else:
-                dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                print('The video file already exists.')
+
+        def generate_tsv(pth):
+            data_file = osp.join(pth, f'{dataset_name}.tsv')
+            if os.path.exists(data_file) and md5(data_file) == self.MD5:
+                return
+
+            data_file = pd.read_parquet(os.path.join(pth, 'data/test-00000-of-00001.parquet'))
+            data_file = data_file.assign(index=range(len(data_file)))
+            data_file['video'] = data_file['video_id']
+            data_file['video_path'] = data_file['video_id'].apply(lambda x: f'./video/{x}.mp4')
+
+            data_file = data_file[['index', 'video', 'video_path', 'duration', 'question', 'question_prompt',
+                                   'capability', 'answer']]
+
+            data_file.to_csv(osp.join(pth, f'{dataset_name}.tsv'), sep='\t', index=False)
+
+        # === LOCAL PATH PRIORITY ===
+        local_target_path = "/m2v_intern/xuboshen/zgw/Benchmarks/VideoTT"
+
+        if os.path.exists(local_target_path):
+            print(f"Loading Video-TT from local path: {local_target_path}")
+            dataset_path = local_target_path
             unzip_hf_zip(dataset_path)
             generate_tsv(dataset_path)
+        else:
+            # Fall back to cache or HuggingFace download
+            cache_path = get_cache_path(repo_id)
+            if cache_path is not None and check_integrity(cache_path):
+                dataset_path = cache_path
+            else:
+                if modelscope_flag_set():
+                    from modelscope import dataset_snapshot_download
+                    dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+                else:
+                    dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                unzip_hf_zip(dataset_path)
+                generate_tsv(dataset_path)
 
         data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
 
