@@ -48,11 +48,29 @@ class Vinoground(VideoBaseDataset):
             lmu_root = LMUDataRoot()
             data_root = osp.join(lmu_root, 'Vinoground')
 
+        # Auto-extract zip files if video subdirs don't exist
+        for zip_name, subdir in [
+            ('vinoground_videos.zip', 'vinoground_videos'),
+            ('vinoground_videos_concated.zip', 'vinoground_videos_concated'),
+        ]:
+            zip_path = osp.join(data_root, zip_name)
+            subdir_path = osp.join(data_root, subdir)
+            if osp.exists(zip_path) and not osp.exists(subdir_path):
+                import zipfile
+                print(f'[Vinoground] Extracting {zip_name} ...')
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    zf.extractall(data_root)
+
         tsv_file = osp.join(data_root, f'{dataset_name}.tsv')
 
         if not osp.exists(tsv_file):
+            # Look for JSON files: first in subdirs, then at root level
             text_json = osp.join(data_root, 'vinoground_videos', 'vinoground_textscore.json')
+            if not osp.exists(text_json):
+                text_json = osp.join(data_root, 'vinoground_textscore.json')
             video_json = osp.join(data_root, 'vinoground_videos_concated', 'vinoground_videoscore.json')
+            if not osp.exists(video_json):
+                video_json = osp.join(data_root, 'vinoground_videoscore.json')
 
             assert osp.exists(text_json), (
                 f'Vinoground text-score annotation not found: {text_json}\n'

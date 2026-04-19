@@ -450,8 +450,9 @@ class VideoMMMU(VideoBaseDataset):
                  dataset='VideoMMMU',
                  nframe=0,
                  fps=-1,
+                 adaptive=False,
                  interleave=False):
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
         self.dataset_name = dataset
         self.interleave = interleave
 
@@ -481,23 +482,22 @@ class VideoMMMU(VideoBaseDataset):
             import zipfile
             base_dir = Path(pth)
             target_dir = base_dir / 'videos'
-            target_dir.mkdir(exist_ok=True)
             zip_files = sorted(base_dir.glob('*.zip'))
 
-            if not target_dir.exists():
+            if not target_dir.exists() and zip_files:
+                target_dir.mkdir(exist_ok=True)
                 for zip_file in zip_files:
+                    print(f'[VideoMMMU] Extracting {zip_file.name} ...')
                     with zipfile.ZipFile(str(zip_file), 'r') as zip_ref:
                         for member in zip_ref.namelist():
-                            # Check if the member is a file (not a directory)
                             if not member.endswith(
                                     '/') and not member.startswith('__'):
-                                # Extract the file to the specified directory
                                 source = zip_ref.open(member)
                                 target = target_dir / member
                                 target.parent.mkdir(exist_ok=True)
                                 if not target.exists():
-                                    with source, open(target, 'wb'):
-                                        target.write(source.read())
+                                    with source, open(target, 'wb') as f:
+                                        f.write(source.read())
                 print(
                     'The video file has been restored and stored from the zip file.'
                 )

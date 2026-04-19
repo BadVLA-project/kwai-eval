@@ -81,19 +81,19 @@ export TIMELENS_EVAL_MODE="${TIMELENS_EVAL_MODE:-timelens}"
 # More GPUs → smaller batches, less memory per GPU, fewer decode workers
 if [ "${NGPU}" -ge 8 ]; then
   export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-16}"
-  export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-16}"
-  export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+  export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-32}"
+  export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.75}"
   export VLLM_BUILD_WORKERS="${VLLM_BUILD_WORKERS:-2}"
 elif [ "${NGPU}" -ge 4 ]; then
   export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-16}"
   export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-32}"
-  export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+  export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.75}"
   export VLLM_BUILD_WORKERS="${VLLM_BUILD_WORKERS:-4}"
 else
   # 1-2 GPUs: can afford larger batches
   export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-16}"
   export VLLM_BATCH_CHUNK_SIZE="${VLLM_BATCH_CHUNK_SIZE:-32}"
-  export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+  export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.75}"
   export VLLM_BUILD_WORKERS="${VLLM_BUILD_WORKERS:-4}"
 fi
 
@@ -131,11 +131,7 @@ else
     AoTBench_Rtime_t2v_adaptive
     AoTBench_Rtime_v2t_adaptive
     AoTBench_QA_adaptive
-    FutureOmni_adaptive
-    CharadesTimeLens_adaptive
-    CharadesSTA_adaptive
     MVBench_MP4_adaptive
-    PerceptionTest_val_adaptive
     Video_Holmes_adaptive
     Video-MME_adaptive
     ETBench_adaptive
@@ -143,6 +139,9 @@ else
     TimeLensBench_Charades_adaptive
     TimeLensBench_ActivityNet_adaptive
     TimeLensBench_QVHighlights_adaptive
+    VideoMMMU_adaptive
+    Vinoground_adaptive
+    Video-TT_adaptive
   )
 fi
 
@@ -154,10 +153,9 @@ if [ -n "${MODELS:-}" ]; then
   read -ra MODEL_LIST <<< "${MODELS}"
 else
   MODEL_LIST=(
+    VideoSSR-8B
     Qwen3-VL-4B-Instruct
-    # Qwen3-VL-4B-Instruct_aot_v2t
-    # Qwen3-VL-4B-Instruct_aot_v2t_strict
-    # ---- uncomment models above or add your own ----
+    Qwen3-VL-8B-Instruct
   )
 fi
 

@@ -43,8 +43,8 @@ Respond with only the letter (A, B, C, or D) of the correct option.
     TYPE = 'Video-MCQ'
     DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
-    def __init__(self, dataset='Video-TT', nframe=0, fps=-1):
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+    def __init__(self, dataset='Video-TT', nframe=0, fps=-1, adaptive=False):
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
         self.dataset_name = dataset
 
     @classmethod
@@ -73,7 +73,7 @@ Respond with only the letter (A, B, C, or D) of the correct option.
             target_dir = os.path.join(pth, 'video/')
             zip_files = [
                 os.path.join(base_dir, file) for file in os.listdir(base_dir)
-                if file.endswith('.zip') and file.startswith('Benchmark-AllVideos-LQ')
+                if file.endswith('.zip') and file.startswith('Benchmark-AllVideos')
             ]
             zip_files.sort()
 
