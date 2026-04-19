@@ -68,6 +68,7 @@ from .videott import VideoTT
 
 from .worldsense import WorldSense
 from .aotbench import AoTBench
+from .vinoground import Vinoground
 from .futureomni import FutureOmni
 from .charades_sta import CharadesSTA, CharadesTimeLens
 from .timelens_bench import TimeLensBench
@@ -252,6 +253,7 @@ VIDEO_DATASET = [
     Video_Holmes, VCRBench, CGAVCounting,
     EgoExoBench_MCQ, DREAM, VideoTT, VideoMMMU, VSIBench,
     CharadesSTA, CharadesTimeLens, TimeLensBench, PerceptionTest,
+    Vinoground,
 
 ]
 
