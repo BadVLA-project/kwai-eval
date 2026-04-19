@@ -53,11 +53,14 @@ _EVAL_PRE_PROMPT = (
 )
 _EVAL_POST_PROMPT = 'Please return its start time and end time in seconds.'
 
-# "timelens" mode prompt (TimeLens original, no example)
+# "timelens" mode prompt (with few-shot example for better accuracy)
 _TIMELENS_PROMPT = (
-    "Please find the visual event described by the sentence '{}', "
-    "determining its starting and ending times. "
-    "The format should be: 'The event happens in <start time> - <end time> seconds'."
+    'Please find the visual event described by a sentence in the video, '
+    'determining its starting and ending times. '
+    "The format should be: 'The event happens in the start time - end time seconds'. "
+    "For example: The event 'person turn a light on' happens in the 24.3 - 30.4 seconds. "
+    "Now I will give you the textual sentence: {}. "
+    'Please return its start time and end time in seconds.'
 )
 
 # CoT suffix (shared by both modes)
