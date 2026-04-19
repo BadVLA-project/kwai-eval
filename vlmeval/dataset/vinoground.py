@@ -1,3 +1,4 @@
+import json
 import os.path as osp
 from ..smp import *
 from ..smp.file import get_intermediate_file_path, get_file_extension
