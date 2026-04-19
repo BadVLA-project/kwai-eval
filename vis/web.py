@@ -249,7 +249,7 @@ benchmarks.forEach(b => {
     }
   }
 });
-let expandedParents = new Set();  // which parents show children
+let expandedParents = new Set(Object.keys(benchChildren));  // default expanded
 
 // ── Tab switching ──
 function switchTab(tab) {
@@ -314,9 +314,16 @@ function renderTable() {
     const arrow = sortCol === b ? (sortAsc ? ' ▲' : ' ▼') : '';
     const hasChildren = benchChildren[b] != null;
     const isChild = benchParents[b] != null;
-    const toggle = (hasChildren || isChild) ? ` ondblclick="toggleParent('${esc(hasChildren ? b : benchParents[b])}')"` : '';
-    const icon = hasChildren ? ' ▸' : (isChild ? '' : '');
-    h += `<th onclick="sortTable('${esc(b)}')"${toggle}>${b}${icon}${arrow}</th>`;
+    const expanded = hasChildren && expandedParents.has(b);
+    let icon = '';
+    if (hasChildren) {
+      const chevron = expanded ? '▾' : '▸';
+      const parent = b;
+      icon = ` <span style="cursor:pointer;font-size:10px" onclick="event.stopPropagation();toggleParent('${esc(parent)}')">${chevron}</span>`;
+    } else if (isChild) {
+      icon = ` <span style="cursor:pointer;font-size:10px" onclick="event.stopPropagation();toggleParent('${esc(benchParents[b])}')">\u00d7</span>`;
+    }
+    h += `<th onclick="sortTable('${esc(b)}')">${b}${icon}${arrow}</th>`;
   });
   h += '<th onclick="sortTable(\'__avg__\')">Avg' + (sortCol === '__avg__' ? (sortAsc ? ' ▲' : ' ▼') : '') + '</th>';
   h += '</tr></thead><tbody>';
