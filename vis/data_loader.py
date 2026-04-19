@@ -103,27 +103,56 @@ class ResultLoader:
         self._benchmarks = sorted(self._benchmarks)
 
     def _expand_etbench(self):
-        """Expand ETBench into sub-columns for each aggregation group."""
-        if 'ETBench' not in self._benchmarks:
+        """Expand ETBench into sub-columns for each aggregation group.
+
+        Detects ETBench by content (presence of AVG key in data),
+        not by exact benchmark name, since names may include suffixes
+        like '_adaptive'.
+        """
+        # Find ETBench benchmarks by checking data content
+        etbench_benches = []
+        for bench in list(self._benchmarks):
+            if not bench.upper().startswith('ETBENCH'):
+                continue
+            # Check if any model's data for this bench has AVG key
+            for model in self._models:
+                key = (model, bench)
+                if key not in self._score_files:
+                    continue
+                data = self._load_file(self._score_files[key])
+                if isinstance(data, dict) and 'AVG' in data:
+                    etbench_benches.append(bench)
+                    break
+
+        if not etbench_benches:
             return
 
+        # Use the first (or shortest) ETBench name as the canonical one
+        canonical = min(etbench_benches, key=len)
+
         for model in self._models:
-            key = (model, 'ETBench')
-            if key not in self._score_files:
+            # Try all ETBench variants for this model, prefer canonical
+            data = None
+            for bench in etbench_benches:
+                key = (model, bench)
+                if key in self._score_files:
+                    candidate = self._load_file(self._score_files[key])
+                    if isinstance(candidate, dict) and 'AVG' in candidate:
+                        data = candidate
+                        if bench == canonical:
+                            break  # prefer canonical
+
+            if data is None:
                 continue
 
-            data = self._load_file(self._score_files[key])
-            if not isinstance(data, dict) or 'AVG' not in data:
-                continue
-
-            self._merged_data[key] = {
+            self._merged_data[(model, canonical)] = {
                 'primary': float(data['AVG']),
                 'breakdown': {g: float(data.get(cfg['key'], float('nan')))
                               for g, cfg in ETBENCH_GROUPS.items()},
             }
 
             for group_name, cfg in ETBENCH_GROUPS.items():
-                sub_bench = f'ETBench/{group_name}'
+                sub_bench = f'{canonical}/{group_name}'
                 group_val = data.get(cfg['key'])
                 if group_val is None:
                     continue
@@ -136,19 +165,19 @@ class ResultLoader:
                     'breakdown': sub_breakdown,
                 }
 
-        has_etbench_data = any(
-            (m, 'ETBench') in self._score_files for m in self._models
-        )
-        if has_etbench_data:
-            for group_name in ETBENCH_GROUPS:
-                sub_bench = f'ETBench/{group_name}'
-                if sub_bench not in self._benchmarks:
-                    self._benchmarks.append(sub_bench)
-
+        # Remove all ETBench variants from benchmarks and score_files
+        for bench in etbench_benches:
+            if bench in self._benchmarks:
+                self._benchmarks.remove(bench)
             for model in self._models:
-                self._score_files.pop((model, 'ETBench'), None)
+                self._score_files.pop((model, bench), None)
 
-            self._benchmarks = sorted(self._benchmarks)
+        # Add canonical + sub-columns
+        self._benchmarks.append(canonical)
+        for group_name in ETBENCH_GROUPS:
+            self._benchmarks.append(f'{canonical}/{group_name}')
+
+        self._benchmarks = sorted(self._benchmarks)
 
     # ── Public accessors ──────────────────────────────────────────────────
 
@@ -313,6 +342,17 @@ class ResultLoader:
             if scores:
                 return sum(scores) / len(scores)
 
+        # MLVU_MCQ / get_dimension_rating: {task: [correct, total]} lists
+        if any(isinstance(v, list) and len(v) == 2 for v in data.values()):
+            total_correct = 0
+            total_count = 0
+            for v in data.values():
+                if isinstance(v, list) and len(v) == 2:
+                    total_correct += v[0]
+                    total_count += v[1]
+            if total_count > 0:
+                return round(total_correct / total_count * 100, 2)
+
         # Common keys
         for key in ('mIoU', 'total', 'accuracy', 'acc', 'score'):
             if key in data and isinstance(data[key], (int, float)):
@@ -382,4 +422,11 @@ class ResultLoader:
                     try:
                         out[new_key] = float(str(v[2]).rstrip('%'))
                     except (ValueError, IndexError):
+                        pass
+                elif isinstance(v, list) and len(v) == 2:
+                    # MLVU_MCQ format: [correct, total]
+                    try:
+                        c, t = int(v[0]), int(v[1])
+                        out[new_key] = round(c / t * 100, 2) if t > 0 else 0.0
+                    except (ValueError, ZeroDivisionError, TypeError):
                         pass
