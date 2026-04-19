@@ -92,13 +92,13 @@ class VideoBaseDataset:
     def compute_adaptive_indices(self, vid):
         """Compute frame indices using adaptive strategy based on video duration.
 
-        Strategy: ≤30s → 2fps, 30–256s → 1fps, >256s → uniform 256 frames.
+        Strategy: ≤128s → 2fps, 128–256s → 1fps, >256s → uniform 256 frames.
         """
         total_frames = len(vid)
         video_fps = vid.get_avg_fps()
         duration = total_frames / video_fps
 
-        if duration <= 30:
+        if duration <= 128:
             fps = 2.0
             strategy = f'2fps (duration={duration:.1f}s)'
             step_size = video_fps / fps
@@ -134,7 +134,7 @@ class VideoBaseDataset:
         video_fps = vid.get_avg_fps()
         duration = total_frames / video_fps
         key = video_id or video_path
-        if duration <= 30:
+        if duration <= 128:
             nf = max(1, int(duration * 2.0))
             self.frame_info[key] = {'num_frames': nf, 'strategy': f'2fps (dur={duration:.1f}s)'}
             return {'fps': 2.0}
