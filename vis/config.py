@@ -31,3 +31,32 @@ ETBENCH_GROUPS = {
     'CAP': {'key': 'CAP/F1', 'tasks': ['DVC/F1', 'DVC/SentSim', 'SLC/F1', 'SLC/SentSim']},
     'COM': {'key': 'COM/mRec', 'tasks': ['TEM/mRec', 'GVQ/mRec']},
 }
+
+ETBENCH_TABLE_ORDER = ['REF', 'GND', 'CAP', 'COM', 'AVG']
+
+VINOGROUND_TABLE_COLUMNS = [
+    ('text_score', 'Text'),
+    ('video_score', 'Video'),
+    ('group_score', 'Group'),
+]
+
+GROUNDING_PRIMARY_KEYS = [
+    'mIoU',
+    'Average/Average IoU',
+    'Average IoU',
+]
+
+PRIMARY_METRIC_KEYS = [
+    'AVG',
+    'group_score',
+    'overall',
+    'Overall',
+    'final_rating/total',
+    'M-Avg',
+    'Macro Accuracy',
+    'Overall Consistency',
+    'Final Score',
+    'score',
+    'accuracy',
+    'acc',
+]

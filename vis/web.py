@@ -1,12 +1,5 @@
-"""Self-contained interactive HTML dashboard for evaluation results.
+"""Self-contained interactive HTML dashboard for evaluation results."""
 
-Generates a single HTML file with embedded ECharts that:
-1. Score Table — heatmap-colored matrix with config badges & breakdown drill-down
-2. Model Config — side-by-side comparison of model settings
-3. Charts — radar / bar chart selector
-"""
-
-import html
 import http.server
 import json
 import math
@@ -35,39 +28,39 @@ def _sanitize(obj):
 
 def export_data(loader: ResultLoader) -> dict:
     """Build the complete JSON data payload for the dashboard."""
-    df = loader.load_all_scores()
+    df = loader.load_all_column_scores()
     models = loader.models
-    benchmarks = loader.benchmarks
+    table_groups = loader.table_groups
+    table_columns = loader.table_columns
 
-    # Build score matrix
     scores = {}
-    for m in models:
+    for model in models:
         row = {}
-        for b in benchmarks:
-            val = df.loc[m, b] if m in df.index and b in df.columns else float('nan')
-            row[b] = _sanitize(val)
-        scores[m] = row
+        for col in table_columns:
+            col_id = col['id']
+            val = df.loc[model, col_id] if model in df.index and col_id in df.columns else float('nan')
+            row[col_id] = _sanitize(val)
+        scores[model] = row
 
-    # Model configs
     configs = {}
-    for m in models:
-        cfg = loader.model_config(m)
-        configs[m] = _sanitize(cfg) if cfg else None
+    for model in models:
+        cfg = loader.model_config(model)
+        configs[model] = _sanitize(cfg) if cfg else None
 
-    # Breakdowns
     breakdowns = {}
-    for m in models:
-        bd = {}
-        for b in benchmarks:
-            data = loader.load_breakdown(m, b)
+    for model in models:
+        per_model = {}
+        for col in table_columns:
+            data = loader.load_column_breakdown(model, col['id'])
             if data:
-                bd[b] = _sanitize(data)
-        if bd:
-            breakdowns[m] = bd
+                per_model[col['id']] = _sanitize(data)
+        if per_model:
+            breakdowns[model] = per_model
 
     return _sanitize({
-        'models': [{'key': m, 'color': loader.model_color(m)} for m in models],
-        'benchmarks': benchmarks,
+        'models': [{'key': model, 'color': loader.model_color(model)} for model in models],
+        'table_groups': table_groups,
+        'table_columns': table_columns,
         'scores': scores,
         'configs': configs,
         'breakdowns': breakdowns,
@@ -98,7 +91,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .table-wrap { overflow-x:auto; max-height:calc(100vh - 120px); overflow-y:auto; }
 table.score-table { border-collapse:collapse; font-size:12px; width:100%; }
 table.score-table th, table.score-table td { padding:6px 10px; border:1px solid #ddd; text-align:center; white-space:nowrap; }
-table.score-table th { background:#34495e; color:#fff; cursor:pointer; user-select:none; position:sticky; top:0; z-index:2; }
+table.score-table th { color:#fff; cursor:pointer; user-select:none; position:sticky; z-index:2; }
+table.score-table thead tr.group-row th { top:0; background:#2c3e50; }
+table.score-table thead tr.sub-row th { top:35px; background:#405a73; }
+table.score-table th.rowspan-head { z-index:3; }
 table.score-table th:hover { background:#4a6785; }
 table.score-table td.model-name { text-align:left; font-weight:500; background:#fafafa; position:sticky; left:0; z-index:1; }
 table.score-table tr:hover td { outline: 2px solid #3498db; }
@@ -160,7 +156,6 @@ table.config-table td.diff { background:#fff3cd; }
 </div>
 
 <div class="content">
-  <!-- Tab 1: Score Table -->
   <div id="tab-table">
     <div class="table-layout" style="display:flex;gap:16px;">
       <div class="table-sidebar" style="width:240px;flex-shrink:0;background:#fff;border-radius:8px;padding:12px;overflow-y:auto;max-height:calc(100vh - 120px);box-shadow:0 1px 3px rgba(0,0,0,0.1);">
@@ -175,7 +170,6 @@ table.config-table td.diff { background:#fff3cd; }
     </div>
   </div>
 
-  <!-- Tab 2: Model Config -->
   <div id="tab-config" style="display:none">
     <div class="config-layout">
       <div class="config-sidebar">
@@ -190,7 +184,6 @@ table.config-table td.diff { background:#fff3cd; }
     </div>
   </div>
 
-  <!-- Tab 3: Charts -->
   <div id="tab-charts" style="display:none">
     <div class="chart-layout">
       <div class="chart-sidebar">
@@ -217,66 +210,82 @@ table.config-table td.diff { background:#fff3cd; }
 <script>
 const DATA = /**__DATA__**/;
 
-const models = DATA.models;
-const benchmarks = DATA.benchmarks;
-const scores = DATA.scores;
+const models = DATA.models || [];
+const tableGroups = DATA.table_groups || [];
+const tableColumns = DATA.table_columns || [];
+const columnById = Object.fromEntries(tableColumns.map(col => [col.id, col]));
+const scores = DATA.scores || {};
 const configs = DATA.configs || {};
 const breakdowns = DATA.breakdowns || {};
 
 let activeTab = 'table';
 let chartType = 'radar';
 let selectedModels = new Set(models.map(m => m.key));
-let selectedBench = new Set(benchmarks);
+let selectedBench = new Set(tableColumns.map(col => col.id));
 let selectedConfigModels = new Set(models.slice(0, Math.min(4, models.length)).map(m => m.key));
 let chartInstance = null;
 let sortCol = null;
 let sortAsc = true;
-let expandedCell = null;  // {model, bench} or null
-let breakdownCharts = {};
+let expandedCell = null;
 let selectedTableModels = new Set(models.map(m => m.key));
 
-// ETBench expand/collapse: detect parent/child benchmarks
-const benchParents = {};  // 'ETBench/REF' -> 'ETBench'
-const benchChildren = {};  // 'ETBench' -> ['ETBench/REF', ...]
-benchmarks.forEach(b => {
-  const slash = b.indexOf('/');
-  if (slash > 0) {
-    const parent = b.substring(0, slash);
-    if (benchmarks.includes(parent)) {
-      benchParents[b] = parent;
-      if (!benchChildren[parent]) benchChildren[parent] = [];
-      benchChildren[parent].push(b);
-    }
-  }
-});
-let expandedParents = new Set(Object.keys(benchChildren));  // default expanded
-
-// ── Tab switching ──
 function switchTab(tab) {
   activeTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
-  ['table','config','charts'].forEach(t => {
-    document.getElementById('tab-'+t).style.display = t === tab ? '' : 'none';
+  ['table', 'config', 'charts'].forEach(t => {
+    document.getElementById('tab-' + t).style.display = t === tab ? '' : 'none';
   });
   if (tab === 'charts') updateChart();
   if (tab === 'config') renderConfigTable();
 }
 
-// ═══════════════════════════════════════════════════════
-//  TAB 1: Score Table
-// ═══════════════════════════════════════════════════════
-
 function configBadges(model) {
   const cfg = configs[model];
   if (!cfg) return '';
-  let b = '';
-  if (cfg.use_vllm) b += '<span class="badge badge-vllm">vLLM</span>';
-  if (cfg.dataset_adaptive) b += '<span class="badge badge-adaptive">adaptive</span>';
-  if (cfg.fps != null && !cfg.dataset_adaptive) b += `<span class="badge badge-fps">${cfg.fps}fps</span>`;
-  if (cfg.dataset_fps != null && cfg.dataset_fps > 0) b += `<span class="badge badge-fps">ds:${cfg.dataset_fps}fps</span>`;
-  if (cfg.nframe != null && cfg.nframe > 0 && !cfg.dataset_adaptive) b += `<span class="badge badge-nframe">${cfg.nframe}f</span>`;
-  return b;
+  let badges = '';
+  if (cfg.use_vllm) badges += '<span class="badge badge-vllm">vLLM</span>';
+  if (cfg.dataset_adaptive) badges += '<span class="badge badge-adaptive">adaptive</span>';
+  if (cfg.fps != null && !cfg.dataset_adaptive) badges += `<span class="badge badge-fps">${cfg.fps}fps</span>`;
+  if (cfg.dataset_fps != null && cfg.dataset_fps > 0) badges += `<span class="badge badge-fps">ds:${cfg.dataset_fps}fps</span>`;
+  if (cfg.nframe != null && cfg.nframe > 0 && !cfg.dataset_adaptive) badges += `<span class="badge badge-nframe">${cfg.nframe}f</span>`;
+  return badges;
+}
+
+function sortTable(col) {
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = false; }
+  renderTable();
+}
+
+function calcAvg(model) {
+  let sum = 0;
+  let cnt = 0;
+  tableGroups.forEach(group => {
+    const summaryId = group.summary_column_id || group.columns[group.columns.length - 1]?.id;
+    const value = summaryId ? scores[model]?.[summaryId] : null;
+    if (value != null) {
+      sum += value;
+      cnt++;
+    }
+  });
+  return cnt > 0 ? sum / cnt : -Infinity;
+}
+
+function heatColor(ratio) {
+  let r, g, b;
+  if (ratio < 0.5) {
+    const t = ratio * 2;
+    r = Math.round(207 + (154 - 207) * t);
+    g = Math.round(34 + (103 - 34) * t);
+    b = Math.round(46 + (0 - 46) * t);
+  } else {
+    const t = (ratio - 0.5) * 2;
+    r = Math.round(154 + (26 - 154) * t);
+    g = Math.round(103 + (127 - 103) * t);
+    b = Math.round(0 + (55 - 0) * t);
+  }
+  return `rgb(${r},${g},${b})`;
 }
 
 function renderTable() {
@@ -296,69 +305,69 @@ function renderTable() {
     });
   }
 
-  const colMin = {}, colMax = {};
-  // Filter benchmarks: hide children of collapsed parents, hide parent when expanded
-  const visibleBench = benchmarks.filter(b => {
-    if (benchParents[b]) return expandedParents.has(benchParents[b]);
-    if (benchChildren[b]) return !expandedParents.has(b);
-    return true;
-  });
-  visibleBench.forEach(b => {
-    let vals = modelKeys.map(m => scores[m]?.[b]).filter(v => v != null);
-    colMin[b] = vals.length ? Math.min(...vals) : 0;
-    colMax[b] = vals.length ? Math.max(...vals) : 100;
+  const colMin = {};
+  const colMax = {};
+  tableColumns.forEach(col => {
+    const vals = modelKeys.map(m => scores[m]?.[col.id]).filter(v => v != null);
+    colMin[col.id] = vals.length ? Math.min(...vals) : 0;
+    colMax[col.id] = vals.length ? Math.max(...vals) : 100;
   });
 
-  let h = '<table class="score-table"><thead><tr><th>Model</th>';
-  visibleBench.forEach(b => {
-    const arrow = sortCol === b ? (sortAsc ? ' ▲' : ' ▼') : '';
-    const hasChildren = benchChildren[b] != null;
-    const isChild = benchParents[b] != null;
-    const expanded = hasChildren && expandedParents.has(b);
-    let icon = '';
-    if (hasChildren) {
-      const chevron = expanded ? '▾' : '▸';
-      const parent = b;
-      icon = ` <span style="cursor:pointer;font-size:10px" onclick="event.stopPropagation();toggleParent('${esc(parent)}')">${chevron}</span>`;
-    } else if (isChild) {
-      icon = ` <span style="cursor:pointer;font-size:10px" onclick="event.stopPropagation();toggleParent('${esc(benchParents[b])}')">\u00d7</span>`;
+  const hasMultiHeader = tableGroups.some(group => group.columns.length > 1);
+  let h = '<table class="score-table"><thead><tr class="group-row">';
+  h += `<th class="rowspan-head" ${hasMultiHeader ? 'rowspan="2"' : ''}>Model</th>`;
+  tableGroups.forEach(group => {
+    const arrow = sortCol === group.summary_column_id ? (sortAsc ? ' ▲' : ' ▼') : '';
+    if (group.columns.length === 1 || !hasMultiHeader) {
+      h += `<th class="rowspan-head" ${hasMultiHeader ? 'rowspan="2"' : ''} onclick="sortTable('${esc(group.summary_column_id)}')">${group.label}${arrow}</th>`;
+    } else {
+      h += `<th colspan="${group.columns.length}" onclick="sortTable('${esc(group.summary_column_id)}')">${group.label}${arrow}</th>`;
     }
-    h += `<th onclick="sortTable('${esc(b)}')">${b}${icon}${arrow}</th>`;
   });
-  h += '<th onclick="sortTable(\'__avg__\')">Avg' + (sortCol === '__avg__' ? (sortAsc ? ' ▲' : ' ▼') : '') + '</th>';
-  h += '</tr></thead><tbody>';
+  h += `<th class="rowspan-head" ${hasMultiHeader ? 'rowspan="2"' : ''} onclick="sortTable('__avg__')">Avg${sortCol === '__avg__' ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>`;
+  h += '</tr>';
 
-  modelKeys.forEach(m => {
-    h += '<tr>';
-    h += `<td class="model-name">${m}${configBadges(m)}</td>`;
-    let sum = 0, cnt = 0;
-    visibleBench.forEach(b => {
-      const v = scores[m]?.[b];
-      if (v != null) {
-        const range = colMax[b] - colMin[b];
-        const ratio = range > 0 ? (v - colMin[b]) / range : 0.5;
-        const bg = heatColor(ratio);
-        const hasBd = breakdowns[m]?.[b] != null;
-        const cls = hasBd ? 'clickable' : '';
-        h += `<td class="${cls}" style="color:${bg};font-weight:600" ${hasBd ? `onclick="toggleBreakdown('${esc(m)}','${esc(b)}')"` : ''}>${v.toFixed(1)}</td>`;
-        sum += v; cnt++;
-      } else {
-        h += '<td style="color:#ccc">\u2014</td>';
-      }
+  if (hasMultiHeader) {
+    h += '<tr class="sub-row">';
+    tableGroups.forEach(group => {
+      if (group.columns.length <= 1) return;
+      group.columns.forEach(col => {
+        const arrow = sortCol === col.id ? (sortAsc ? ' ▲' : ' ▼') : '';
+        h += `<th onclick="sortTable('${esc(col.id)}')">${col.label}${arrow}</th>`;
+      });
     });
-    const avg = cnt > 0 ? (sum / cnt).toFixed(1) : '\u2014';
-    h += `<td style="font-weight:600">${avg}</td>`;
+    h += '</tr>';
+  }
+  h += '</thead><tbody>';
+
+  modelKeys.forEach(model => {
+    h += '<tr>';
+    h += `<td class="model-name">${model}${configBadges(model)}</td>`;
+    tableGroups.forEach(group => {
+      group.columns.forEach(col => {
+        const value = scores[model]?.[col.id];
+        if (value != null) {
+          const range = colMax[col.id] - colMin[col.id];
+          const ratio = range > 0 ? (value - colMin[col.id]) / range : 0.5;
+          const color = heatColor(ratio);
+          const hasBreakdown = breakdowns[model]?.[col.id] != null;
+          const cls = hasBreakdown ? 'clickable' : '';
+          const onclick = hasBreakdown ? `onclick="toggleBreakdown('${esc(model)}','${esc(col.id)}')"` : '';
+          h += `<td class="${cls}" style="color:${color};font-weight:600" ${onclick}>${value.toFixed(1)}</td>`;
+        } else {
+          h += '<td style="color:#ccc">—</td>';
+        }
+      });
+    });
+    const avg = calcAvg(model);
+    h += `<td style="font-weight:600">${avg > -Infinity ? avg.toFixed(1) : '—'}</td>`;
     h += '</tr>';
 
-    // Breakdown row (hidden by default)
-    if (expandedCell && expandedCell.model === m) {
-      const bd = breakdowns[m]?.[expandedCell.bench];
+    if (expandedCell && expandedCell.model === model) {
+      const bd = breakdowns[model]?.[expandedCell.columnId];
       if (bd) {
-        h += `<tr class="breakdown-row" id="bd-row-${esc(m)}">`;
-        h += `<td colspan="${visibleBench.length + 2}">`;
-        h += `<strong>${expandedCell.bench}</strong> breakdown for ${m}`;
-        h += `<div class="breakdown-chart" id="bd-chart-${esc(m)}-${esc(expandedCell.bench)}"></div>`;
-        h += '</td></tr>';
+        const label = columnById[expandedCell.columnId]?.chart_label || expandedCell.columnId;
+        h += `<tr class="breakdown-row"><td colspan="${tableColumns.length + 2}"><strong>${label}</strong> breakdown for ${model}<div class="breakdown-chart" id="bd-chart-${esc(model)}-${esc(expandedCell.columnId)}"></div></td></tr>`;
       }
     }
   });
@@ -366,76 +375,45 @@ function renderTable() {
   h += '</tbody></table>';
   document.getElementById('score-table-wrap').innerHTML = h;
 
-  // Render breakdown chart if expanded
   if (expandedCell) {
-    const bd = breakdowns[expandedCell.model]?.[expandedCell.bench];
-    if (bd) renderBreakdownChart(expandedCell.model, expandedCell.bench, bd);
+    const bd = breakdowns[expandedCell.model]?.[expandedCell.columnId];
+    if (bd) renderBreakdownChart(expandedCell.model, expandedCell.columnId, bd);
   }
 }
 
-function toggleBreakdown(model, bench) {
-  if (expandedCell && expandedCell.model === model && expandedCell.bench === bench) {
+function toggleBreakdown(model, columnId) {
+  if (expandedCell && expandedCell.model === model && expandedCell.columnId === columnId) {
     expandedCell = null;
   } else {
-    expandedCell = {model, bench};
+    expandedCell = {model, columnId};
   }
   renderTable();
 }
 
-function renderBreakdownChart(model, bench, bd) {
-  const id = `bd-chart-${esc(model)}-${esc(bench)}`;
-  const el = document.getElementById(id);
+function renderBreakdownChart(model, columnId, bd) {
+  const el = document.getElementById(`bd-chart-${esc(model)}-${esc(columnId)}`);
   if (!el) return;
-
   const keys = Object.keys(bd).filter(k => typeof bd[k] === 'number').sort();
   const vals = keys.map(k => bd[k]);
-
   const chart = echarts.init(el);
   chart.setOption({
     grid: { left: 200, right: 30, top: 10, bottom: 20 },
     xAxis: { type: 'value', max: Math.max(100, ...vals) },
     yAxis: { type: 'category', data: keys, axisLabel: { fontSize: 10, width: 180, overflow: 'truncate' } },
-    series: [{ type: 'bar', data: vals, itemStyle: { color: '#3498db' }, barWidth: 14, label: { show: true, position: 'right', fontSize: 10, formatter: p => p.value.toFixed(1) } }],
+    series: [{
+      type: 'bar',
+      data: vals,
+      itemStyle: { color: '#3498db' },
+      barWidth: 14,
+      label: { show: true, position: 'right', fontSize: 10, formatter: p => p.value.toFixed(1) },
+    }],
     tooltip: { trigger: 'axis' },
   });
 }
 
-function calcAvg(m) {
-  let s = 0, c = 0;
-  benchmarks.forEach(b => { const v = scores[m]?.[b]; if (v != null) { s += v; c++; } });
-  return c > 0 ? s / c : -Infinity;
+function esc(s) {
+  return s.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
-
-function heatColor(ratio) {
-  // Text color gradient: red (#cf222e) → amber (#9a6700) → green (#1a7f37)
-  let r, g, b;
-  if (ratio < 0.5) {
-    const t = ratio * 2;
-    r = Math.round(207 + (154 - 207) * t);
-    g = Math.round(34 + (103 - 34) * t);
-    b = Math.round(46 + (0 - 46) * t);
-  } else {
-    const t = (ratio - 0.5) * 2;
-    r = Math.round(154 + (26 - 154) * t);
-    g = Math.round(103 + (127 - 103) * t);
-    b = Math.round(0 + (55 - 0) * t);
-  }
-  return `rgb(${r},${g},${b})`;
-}
-
-function sortTable(col) {
-  if (sortCol === col) sortAsc = !sortAsc;
-  else { sortCol = col; sortAsc = false; }
-  renderTable();
-}
-
-function toggleParent(parent) {
-  if (expandedParents.has(parent)) expandedParents.delete(parent);
-  else expandedParents.add(parent);
-  renderTable();
-}
-
-function esc(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 
 function initTableSidebar() {
   let h = '';
@@ -464,10 +442,6 @@ function toggleAllTable(state) {
   renderTable();
 }
 
-// ═══════════════════════════════════════════════════════
-//  TAB 2: Model Config
-// ═══════════════════════════════════════════════════════
-
 const CONFIG_GROUPS = [
   { label: 'Inference', keys: ['model_class', 'model_path', 'use_vllm', 'use_lmdeploy'] },
   { label: 'Sampling', keys: ['fps', 'nframe', 'dataset_adaptive', 'dataset_fps', 'dataset_nframe'] },
@@ -477,7 +451,7 @@ const CONFIG_GROUPS = [
 
 function initConfigSidebar() {
   let h = '';
-  models.forEach((m, i) => {
+  models.forEach(m => {
     const checked = selectedConfigModels.has(m.key) ? 'checked' : '';
     h += `<label class="check-item">
       <input type="checkbox" ${checked} onchange="toggleConfigModel('${esc(m.key)}')" data-key="${m.key}">
@@ -501,7 +475,6 @@ function renderConfigTable() {
     return;
   }
 
-  // Collect all config values
   const cfgMap = {};
   sel.forEach(m => { cfgMap[m.key] = configs[m.key] || {}; });
 
@@ -509,9 +482,10 @@ function renderConfigTable() {
   CONFIG_GROUPS.forEach(group => {
     h += `<div class="config-section"><h4>${group.label}</h4>`;
     h += '<table class="config-table"><thead><tr><th>Key</th>';
-    sel.forEach(m => { h += `<th style="min-width:120px"><span class="dot" style="background:${m.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${m.key}</th>`; });
+    sel.forEach(m => {
+      h += `<th style="min-width:120px"><span class="dot" style="background:${m.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${m.key}</th>`;
+    });
     h += '</tr></thead><tbody>';
-
     group.keys.forEach(k => {
       const vals = sel.map(m => formatVal(cfgMap[m.key]?.[k]));
       const allSame = vals.every(v => v === vals[0]);
@@ -523,7 +497,6 @@ function renderConfigTable() {
       });
       h += '</tr>';
     });
-
     h += '</tbody></table></div>';
   });
 
@@ -537,10 +510,6 @@ function formatVal(v) {
   return String(v);
 }
 
-// ═══════════════════════════════════════════════════════
-//  TAB 3: Charts
-// ═══════════════════════════════════════════════════════
-
 function initSidebar() {
   let mhtml = '';
   models.forEach(m => {
@@ -553,36 +522,43 @@ function initSidebar() {
   document.getElementById('model-checks').innerHTML = mhtml;
 
   let bhtml = '';
-  benchmarks.forEach(b => {
+  tableColumns.forEach(col => {
     bhtml += `<label class="check-item">
-      <input type="checkbox" checked onchange="toggleBench('${esc(b)}')" data-group="bench" data-key="${b}">
-      <span>${b}</span>
+      <input type="checkbox" checked onchange="toggleBench('${esc(col.id)}')" data-group="bench" data-key="${col.id}">
+      <span>${col.chart_label || col.id}</span>
     </label>`;
   });
   document.getElementById('bench-checks').innerHTML = bhtml;
 }
 
 function toggleModel(key) {
-  if (selectedModels.has(key)) selectedModels.delete(key); else selectedModels.add(key);
+  if (selectedModels.has(key)) selectedModels.delete(key);
+  else selectedModels.add(key);
   updateChart();
 }
+
 function toggleBench(key) {
-  if (selectedBench.has(key)) selectedBench.delete(key); else selectedBench.add(key);
+  if (selectedBench.has(key)) selectedBench.delete(key);
+  else selectedBench.add(key);
   updateChart();
 }
+
 function toggleAll(group, state) {
   document.querySelectorAll(`input[data-group="${group}"]`).forEach(cb => {
     cb.checked = state;
     const key = cb.dataset.key;
-    if (group === 'model') { state ? selectedModels.add(key) : selectedModels.delete(key); }
-    else { state ? selectedBench.add(key) : selectedBench.delete(key); }
+    if (group === 'model') {
+      state ? selectedModels.add(key) : selectedModels.delete(key);
+    } else {
+      state ? selectedBench.add(key) : selectedBench.delete(key);
+    }
   });
   updateChart();
 }
 
 function switchChartType(type) {
   chartType = type;
-  document.querySelectorAll('.chart-type-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.chart-type-btn').forEach(btn => btn.classList.remove('active'));
   document.querySelector(`.chart-type-btn[onclick="switchChartType('${type}')"]`).classList.add('active');
   updateChart();
 }
@@ -594,60 +570,71 @@ function updateChart() {
   chartInstance.resize();
 
   const selModels = models.filter(m => selectedModels.has(m.key));
-  const selBench = benchmarks.filter(b => selectedBench.has(b));
-  if (!selModels.length || !selBench.length) {
+  const selCols = tableColumns.filter(col => selectedBench.has(col.id));
+  if (!selModels.length || !selCols.length) {
     chartInstance.setOption({ title: { text: 'Select models and benchmarks', left: 'center', top: 'center' } });
     return;
   }
 
-  if (chartType === 'radar') renderRadar(selModels, selBench);
-  else renderBar(selModels, selBench);
+  if (chartType === 'radar') renderRadar(selModels, selCols);
+  else renderBar(selModels, selCols);
 }
 
-function renderRadar(selModels, selBench) {
-  const indicators = selBench.map(b => {
-    let vals = selModels.map(m => scores[m.key]?.[b]).filter(v => v != null);
-    let min = vals.length ? Math.min(...vals) : 0;
-    let max = vals.length ? Math.max(...vals) : 100;
-    let pad = (max - min) * 0.1 || 5;
-    return { name: b, min: Math.max(0, Math.floor(min - pad)), max: Math.ceil(max + pad) };
+function renderRadar(selModels, selCols) {
+  const indicators = selCols.map(col => {
+    const vals = selModels.map(m => scores[m.key]?.[col.id]).filter(v => v != null);
+    const min = vals.length ? Math.min(...vals) : 0;
+    const max = vals.length ? Math.max(...vals) : 100;
+    const pad = (max - min) * 0.1 || 5;
+    return {
+      name: col.chart_label || col.id,
+      min: Math.max(0, Math.floor(min - pad)),
+      max: Math.ceil(max + pad),
+    };
   });
 
   chartInstance.setOption({
     tooltip: { trigger: 'item' },
     legend: { data: selModels.map(m => m.key), bottom: 0, type: 'scroll', textStyle: { fontSize: 11 } },
     radar: { indicator: indicators, radius: '60%', nameGap: 8, axisName: { fontSize: 11 } },
-    series: [{ type: 'radar', data: selModels.map(m => ({
-      name: m.key,
-      value: selBench.map(b => scores[m.key]?.[b] ?? null),
-      lineStyle: { width: 2 },
-      areaStyle: { opacity: 0.1 },
-      itemStyle: { color: m.color },
-    })) }],
+    series: [{
+      type: 'radar',
+      data: selModels.map(m => ({
+        name: m.key,
+        value: selCols.map(col => scores[m.key]?.[col.id] ?? null),
+        lineStyle: { width: 2 },
+        areaStyle: { opacity: 0.1 },
+        itemStyle: { color: m.color },
+      })),
+    }],
   });
 }
 
-function renderBar(selModels, selBench) {
+function renderBar(selModels, selCols) {
   chartInstance.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     legend: { data: selModels.map(m => m.key), bottom: 0, type: 'scroll', textStyle: { fontSize: 11 } },
-    grid: { left: 60, right: 20, top: 20, bottom: 60 },
-    xAxis: { type: 'category', data: selBench, axisLabel: { rotate: 30, fontSize: 11 } },
+    grid: { left: 60, right: 20, top: 20, bottom: 80 },
+    xAxis: {
+      type: 'category',
+      data: selCols.map(col => col.chart_label || col.id),
+      axisLabel: { rotate: 30, fontSize: 11 },
+    },
     yAxis: { type: 'value', name: 'Score' },
     series: selModels.map(m => ({
-      name: m.key, type: 'bar',
-      data: selBench.map(b => scores[m.key]?.[b] ?? null),
+      name: m.key,
+      type: 'bar',
+      data: selCols.map(col => scores[m.key]?.[col.id] ?? null),
       itemStyle: { color: m.color },
     })),
   });
 }
 
-// ── Init ──
 window.addEventListener('resize', () => { if (chartInstance) chartInstance.resize(); });
-renderTable();
 initTableSidebar();
 initSidebar();
 initConfigSidebar();
+renderTable();
 </script>
 </body>
 </html>
@@ -692,6 +679,7 @@ def serve(loader: ResultLoader, port: int = 8890):
 def main():
     """CLI entry point for standalone usage."""
     import argparse
+
     parser = argparse.ArgumentParser(description='Eval dashboard')
     parser.add_argument('--work-dir', '--work_dir', required=True, help='Results directory')
     parser.add_argument('-o', '--output', default=None, help='Output HTML file (default: serve mode)')
