@@ -471,6 +471,23 @@ class ResultLoader:
             return float('nan')
         return round(v * 100, 2) if abs(v) <= 1.0 else round(v, 2)
 
+    def _extract_primary_from_flat(self, flat):
+        """Extract a primary score from flattened nested metrics."""
+        if not isinstance(flat, dict) or not flat:
+            return float('nan')
+
+        for key in GROUNDING_PRIMARY_KEYS + PRIMARY_METRIC_KEYS:
+            if key in flat:
+                return self._normalize_score(flat[key])
+
+        nums = [
+            float(value) for key, value in flat.items()
+            if isinstance(value, (int, float)) and not self._is_count_like_metric(key)
+        ]
+        if nums:
+            return self._normalize_score(sum(nums) / len(nums))
+        return float('nan')
+
     def _extract_primary(self, data, path):
         """Extract a single primary score (0-100) from raw data."""
         if data is None:
@@ -502,6 +519,9 @@ class ResultLoader:
             inner = data['overall']
             if 'overall' in inner:
                 return self._normalize_score(inner['overall'])
+            for key in ('score', 'acc', 'accuracy', 'mIoU'):
+                if key in inner:
+                    return self._normalize_score(inner[key])
 
         if 'total' in data and isinstance(data['total'], dict) and 'acc' in data['total']:
             return self._normalize_score(data['total']['acc'])
@@ -529,6 +549,12 @@ class ResultLoader:
         for key in GROUNDING_PRIMARY_KEYS + PRIMARY_METRIC_KEYS + ['total']:
             if key in data and isinstance(data[key], (int, float)):
                 return self._normalize_score(data[key])
+
+        flat = {}
+        self._flatten(data, '', flat)
+        flat_primary = self._extract_primary_from_flat(flat)
+        if not np.isnan(flat_primary):
+            return flat_primary
 
         nums = [float(v) for v in data.values() if isinstance(v, (int, float))]
         if nums:
@@ -570,7 +596,10 @@ class ResultLoader:
         breakdown = self.load_breakdown(model, spec['benchmark'])
         if not isinstance(breakdown, dict) or metric_key not in breakdown:
             return self.load_score(model, spec['benchmark'])
-        return self._normalize_score(breakdown[metric_key])
+        value = self._normalize_score(breakdown[metric_key])
+        if np.isnan(value):
+            return self.load_score(model, spec['benchmark'])
+        return value
 
     def load_all_column_scores(self):
         """Return DataFrame: rows=models, cols=visible table columns."""
@@ -625,6 +654,11 @@ class ResultLoader:
                 new_key = f'{prefix}{key}' if not prefix else f'{prefix}/{key}'
                 if isinstance(value, (int, float)):
                     out[new_key] = round(float(value), 2)
+                elif isinstance(value, str):
+                    try:
+                        out[new_key] = round(float(value), 2)
+                    except ValueError:
+                        pass
                 elif isinstance(value, dict):
                     ResultLoader._flatten(value, new_key, out)
                 elif isinstance(value, list) and len(value) == 3:

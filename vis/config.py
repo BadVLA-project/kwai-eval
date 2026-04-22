@@ -28,11 +28,12 @@ MERGE_PREFIXES = ['AoTBench']
 ETBENCH_GROUPS = {
     'REF': {'key': 'REF/Acc', 'tasks': ['RAR/Acc', 'ECA/Acc', 'RVQ/Acc']},
     'GND': {'key': 'GND/F1', 'tasks': ['TVG/F1', 'EPM/F1', 'TAL/F1', 'EVS/F1', 'VHD/F1']},
-    'CAP': {'key': 'CAP/F1', 'tasks': ['DVC/F1', 'DVC/SentSim', 'SLC/F1', 'SLC/SentSim']},
+    'CAP(F1)': {'key': 'CAP/F1', 'tasks': ['DVC/F1', 'SLC/F1']},
+    'CAP(Sim)': {'key': 'CAP/SentSim', 'tasks': ['DVC/SentSim', 'SLC/SentSim']},
     'COM': {'key': 'COM/mRec', 'tasks': ['TEM/mRec', 'GVQ/mRec']},
 }
 
-ETBENCH_TABLE_ORDER = ['REF', 'GND', 'CAP', 'COM', 'AVG']
+ETBENCH_TABLE_ORDER = ['REF', 'GND', 'CAP(F1)', 'CAP(Sim)', 'COM', 'AVG']
 
 VINOGROUND_TABLE_COLUMNS = [
     ('text_score', 'Text'),
@@ -49,6 +50,11 @@ GROUNDING_PRIMARY_KEYS = [
 PRIMARY_METRIC_KEYS = [
     'AVG',
     'group_score',
+    'overall/overall',
+    'overall/score',
+    'overall/acc',
+    'overall/accuracy',
+    'overall/mIoU',
     'overall',
     'Overall',
     'final_rating/total',
