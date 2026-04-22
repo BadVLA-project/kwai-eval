@@ -278,6 +278,10 @@ def DATASET_TYPE(dataset, *, default: str = 'MCQ') -> str:
         if dataset in cls.supported_datasets():
             if hasattr(cls, 'TYPE'):
                 return cls.TYPE
+    if dataset in supported_video_datasets:
+        factory = supported_video_datasets[dataset]
+        if hasattr(factory.func, 'TYPE'):
+            return factory.func.TYPE
     # Have to add specific routine to handle ConcatDataset
     if dataset in ConcatDataset.DATASET_SETS:
         dataset_list = ConcatDataset.DATASET_SETS[dataset]

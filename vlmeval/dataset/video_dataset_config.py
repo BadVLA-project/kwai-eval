@@ -336,6 +336,13 @@ adaptive_dataset = {
     'AoTBench_QA_adaptive': partial(AoTBench, dataset='AoTBench_QA', adaptive=True),
     # CharadesTimeLens
     'CharadesTimeLens_adaptive': partial(CharadesTimeLens, dataset='CharadesTimeLens', adaptive=True),
+    'CharadesTimeLensTrainPrompt_adaptive': partial(
+        CharadesTimeLens,
+        dataset='CharadesTimeLens',
+        adaptive=True,
+        prompt_style='train',
+        dataset_name_alias='CharadesTimeLensTrainPrompt_adaptive',
+    ),
     # MVBench_MP4
     'MVBench_MP4_adaptive': partial(MVBench_MP4, dataset='MVBench_MP4', adaptive=True),
     # ETBench
@@ -358,6 +365,27 @@ adaptive_dataset = {
     'TimeLensBench_Charades_adaptive': partial(TimeLensBench, dataset='TimeLensBench_Charades', adaptive=True),
     'TimeLensBench_ActivityNet_adaptive': partial(TimeLensBench, dataset='TimeLensBench_ActivityNet', adaptive=True),
     'TimeLensBench_QVHighlights_adaptive': partial(TimeLensBench, dataset='TimeLensBench_QVHighlights', adaptive=True),
+    'TimeLensBenchTrainPrompt_Charades_adaptive': partial(
+        TimeLensBench,
+        dataset='TimeLensBench_Charades',
+        adaptive=True,
+        prompt_style='train',
+        dataset_name_alias='TimeLensBenchTrainPrompt_Charades_adaptive',
+    ),
+    'TimeLensBenchTrainPrompt_ActivityNet_adaptive': partial(
+        TimeLensBench,
+        dataset='TimeLensBench_ActivityNet',
+        adaptive=True,
+        prompt_style='train',
+        dataset_name_alias='TimeLensBenchTrainPrompt_ActivityNet_adaptive',
+    ),
+    'TimeLensBenchTrainPrompt_QVHighlights_adaptive': partial(
+        TimeLensBench,
+        dataset='TimeLensBench_QVHighlights',
+        adaptive=True,
+        prompt_style='train',
+        dataset_name_alias='TimeLensBenchTrainPrompt_QVHighlights_adaptive',
+    ),
     # MLVU
     'MLVU_MCQ_adaptive': partial(MLVU_MCQ, dataset='MLVU_MCQ', adaptive=True),
     # CharadesSTA

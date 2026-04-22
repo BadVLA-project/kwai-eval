@@ -53,7 +53,7 @@ _EVAL_PRE_PROMPT = (
 )
 _EVAL_POST_PROMPT = 'Please return its start time and end time in seconds.'
 
-# "timelens" mode prompt (with few-shot example for better accuracy)
+# Original "timelens" mode prompt (kept for apples-to-apples comparisons)
 _TIMELENS_PROMPT = (
     'Please find the visual event described by a sentence in the video, '
     'determining its starting and ending times. '
@@ -63,7 +63,7 @@ _TIMELENS_PROMPT = (
     'Please return its start time and end time in seconds.'
 )
 
-# CoT suffix (shared by both modes)
+# CoT suffix (used by eval mode, and by timelens mode when boxed output is requested)
 _GROUNDING_COT_SUFFIX = {
     'direct': '',
     'cot_boxed': ('\nPlease reason step by step, then put your final answer '
@@ -94,6 +94,80 @@ def _get_eval_mode():
 def _parse_query(query):
     """TimeLens-style query cleaning: collapse whitespace, strip trailing periods."""
     return re.sub(r'\s+', ' ', query).strip().strip('.').strip()
+
+
+def _format_duration(duration):
+    """Render duration like the training prompt, e.g. '137.1'."""
+    try:
+        duration = float(duration)
+    except (TypeError, ValueError):
+        return None
+    if duration <= 0:
+        return None
+    return f'{duration:.1f}'
+
+
+def _build_timelens_prompt(query, duration=None, video_llm=False):
+    """Match the training-time temporal grounding prompt as closely as possible.
+
+    The actual video is still passed as a structured multimodal input item; the
+    literal ``<video>`` placeholder is only injected for video-LLM backends to
+    mirror the training prompt text.
+    """
+    query = _parse_query(query)
+    duration_text = _format_duration(duration)
+    prompt_lines = ['Watch the following video carefully:']
+    if video_llm:
+        prompt_lines.extend(['<video>', ''])
+    if duration_text is not None:
+        prompt_lines.append(f'This video is {duration_text} seconds long.')
+        prompt_lines.append('')
+    prompt_lines.extend([
+        (
+            f'To accurately pinpoint the event "{query}" in the video, '
+            'determine the precise time period of the event.'
+        ),
+        '',
+        'Provide the start and end times in **seconds** '
+        '(as decimal numbers, e.g. 12.54), NOT in mm:ss or hh:mm:ss format.',
+        'Use the format "<answer>X.XX to Y.YY</answer>".',
+        'Example: <answer>12.54 to 17.83</answer>',
+    ])
+    return '\n'.join(prompt_lines)
+
+
+def _build_timelens_prompt_with_cot(query, duration=None, video_llm=False):
+    """TimeLens prompt variant for <think>/<answer> style outputs."""
+    prompt = _build_timelens_prompt(query, duration=duration, video_llm=video_llm)
+    return (
+        f'{prompt}\n'
+        'First think step by step inside <think> tags, then provide the final '
+        'time span inside <answer> tags using the same format.'
+    )
+
+
+def _build_timelens_prompt_boxed(query, duration=None, video_llm=False):
+    """TimeLens prompt variant for boxed final answers."""
+    query = _parse_query(query)
+    duration_text = _format_duration(duration)
+    prompt_lines = ['Watch the following video carefully:']
+    if video_llm:
+        prompt_lines.extend(['<video>', ''])
+    if duration_text is not None:
+        prompt_lines.append(f'This video is {duration_text} seconds long.')
+        prompt_lines.append('')
+    prompt_lines.extend([
+        (
+            f'To accurately pinpoint the event "{query}" in the video, '
+            'determine the precise time period of the event.'
+        ),
+        '',
+        'Provide the start and end times in **seconds** '
+        '(as decimal numbers, e.g. 12.54), NOT in mm:ss or hh:mm:ss format.',
+        'Please reason step by step, then use the format "\\boxed{X.XX to Y.YY}".',
+        'Example: \\boxed{12.54 to 17.83}',
+    ])
+    return '\n'.join(prompt_lines)
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +285,7 @@ class TimeLensBench(VideoBaseDataset):
 
     Two evaluation modes (env var ``TIMELENS_EVAL_MODE``, default ``eval``):
       - ``eval``:     VLMEvalKit prompt + simple timestamp parser
-      - ``timelens``: TimeLens original prompt + aggressive parser + rounding
+      - ``timelens``: original TimeLens prompt + aggressive parser + rounding
 
     Environment variables:
       - ``TIMELENS_DIR``: root directory of TimeLens-Bench data
@@ -221,7 +295,15 @@ class TimeLensBench(VideoBaseDataset):
 
     TYPE = 'Video-VQA'
 
-    def __init__(self, dataset='TimeLensBench_Charades', nframe=32, fps=-1, adaptive=False):
+    def __init__(
+        self,
+        dataset='TimeLensBench_Charades',
+        nframe=32,
+        fps=-1,
+        adaptive=False,
+        prompt_style='legacy',
+        dataset_name_alias=None,
+    ):
         if not adaptive and fps > 0:
             nframe = 0
         assert dataset in _DATASET_CONFIG, (
@@ -229,7 +311,11 @@ class TimeLensBench(VideoBaseDataset):
             f'Supported: {list(_DATASET_CONFIG.keys())}'
         )
         self._cfg = _DATASET_CONFIG[dataset]
+        self.prompt_style = prompt_style
+        self.dataset_name_alias = dataset_name_alias
         VideoBaseDataset.__init__(self, dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
+        if dataset_name_alias:
+            self.dataset_name = dataset_name_alias
 
     @classmethod
     def supported_datasets(cls):
@@ -319,13 +405,28 @@ class TimeLensBench(VideoBaseDataset):
         mode = _get_eval_mode()
         query = str(line['question'])
 
-        if mode == 'timelens':
+        if self.prompt_style == 'train':
+            duration = line.get('duration', None)
+            cot_mode = _get_cot_mode()
+            if cot_mode == 'cot_tags':
+                text = _build_timelens_prompt_with_cot(
+                    query, duration=duration, video_llm=video_llm
+                )
+            elif cot_mode == 'cot_boxed':
+                text = _build_timelens_prompt_boxed(
+                    query, duration=duration, video_llm=video_llm
+                )
+            else:
+                text = _build_timelens_prompt(
+                    query, duration=duration, video_llm=video_llm
+                )
+        elif mode == 'timelens':
             query_clean = _parse_query(query)
             text = _TIMELENS_PROMPT.format(query_clean)
+            text += _GROUNDING_COT_SUFFIX[_get_cot_mode()]
         else:
             text = f"{_EVAL_PRE_PROMPT}{query}. {_EVAL_POST_PROMPT}"
-
-        text += _GROUNDING_COT_SUFFIX[_get_cot_mode()]
+            text += _GROUNDING_COT_SUFFIX[_get_cot_mode()]
         message.append(dict(type='text', value=text))
         message.append(_MANAGED_PROMPT_SENTINEL)
         return message

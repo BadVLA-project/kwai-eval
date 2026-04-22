@@ -4,6 +4,11 @@ import os.path as osp
 from huggingface_hub import snapshot_download
 from ..smp import *
 from .video_base import VideoBaseDataset
+from .timelens_bench import (
+    _build_timelens_prompt,
+    _build_timelens_prompt_boxed,
+    _build_timelens_prompt_with_cot,
+)
 
 FAIL_MSG = 'Failed to obtain answer via API.'
 
@@ -270,12 +275,24 @@ class CharadesTimeLens(CharadesSTA):
 
     TYPE = 'Video-VQA'
 
-    def __init__(self, dataset='CharadesTimeLens', nframe=32, fps=-1, adaptive=False):
+    def __init__(
+        self,
+        dataset='CharadesTimeLens',
+        nframe=32,
+        fps=-1,
+        adaptive=False,
+        prompt_style='legacy',
+        dataset_name_alias=None,
+    ):
         if not adaptive and fps > 0:
             nframe = 0
+        self.prompt_style = prompt_style
+        self.dataset_name_alias = dataset_name_alias
         # Skip CharadesSTA.__init__ and call VideoBaseDataset.__init__ directly
         # (same pattern as the parent, just override prepare_dataset)
         VideoBaseDataset.__init__(self, dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
+        if dataset_name_alias:
+            self.dataset_name = dataset_name_alias
 
     @classmethod
     def supported_datasets(cls):
@@ -319,7 +336,15 @@ class CharadesTimeLens(CharadesSTA):
 
         # Build annotation TSV (idempotent)
         tsv_file = osp.join(timelens_dir, f'{dataset_name}.tsv')
-        if not osp.exists(tsv_file):
+        rebuild_tsv = not osp.exists(tsv_file)
+        if not rebuild_tsv:
+            try:
+                existing = pd.read_csv(tsv_file, sep='\t', nrows=1)
+                rebuild_tsv = 'duration' not in existing.columns
+            except Exception:
+                rebuild_tsv = True
+
+        if rebuild_tsv:
             with open(json_path, 'r') as f:
                 import json
                 ann = json.load(f)
@@ -329,12 +354,14 @@ class CharadesTimeLens(CharadesSTA):
             for video_id, meta in ann.items():
                 queries = meta['queries']
                 spans = meta['spans']
+                duration = meta.get('duration', -1)
                 for q, span in zip(queries, spans):
                     rows.append({
                         'index': idx,
                         'video': video_id,
                         'question': q,
                         'answer': str(list(span)),   # "[start, end]"
+                        'duration': duration,
                     })
                     idx += 1
             pd.DataFrame(rows).to_csv(tsv_file, sep='\t', index=False)
@@ -361,8 +388,24 @@ class CharadesTimeLens(CharadesSTA):
             for frame in frames:
                 message.append(dict(type='image', value=frame))
 
-        text = f"{PRE_PROMPT}{line['question']}. {POST_PROMPT}"
-        text += _GROUNDING_COT_SUFFIX[_get_cot_mode()]
+        if self.prompt_style == 'train':
+            duration = line.get('duration', None)
+            cot_mode = _get_cot_mode()
+            if cot_mode == 'cot_tags':
+                text = _build_timelens_prompt_with_cot(
+                    str(line['question']), duration=duration, video_llm=video_llm
+                )
+            elif cot_mode == 'cot_boxed':
+                text = _build_timelens_prompt_boxed(
+                    str(line['question']), duration=duration, video_llm=video_llm
+                )
+            else:
+                text = _build_timelens_prompt(
+                    str(line['question']), duration=duration, video_llm=video_llm
+                )
+        else:
+            text = f"{PRE_PROMPT}{line['question']}. {POST_PROMPT}"
+            text += _GROUNDING_COT_SUFFIX[_get_cot_mode()]
         message.append(dict(type='text', value=text))
         message.append(_MANAGED_PROMPT_SENTINEL)
         return message
