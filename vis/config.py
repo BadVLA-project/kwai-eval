@@ -41,6 +41,13 @@ VINOGROUND_TABLE_COLUMNS = [
     ('group_score', 'Group'),
 ]
 
+VIDEO_MME_TABLE_COLUMNS = [
+    ('short/overall', 'Short'),
+    ('medium/overall', 'Medium'),
+    ('long/overall', 'Long'),
+    ('overall/overall', 'AVG'),
+]
+
 GROUNDING_PRIMARY_KEYS = [
     'mIoU',
     'Average/Average IoU',

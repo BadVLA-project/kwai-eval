@@ -15,6 +15,7 @@ from .config import (
     MERGE_PREFIXES,
     PRIMARY_METRIC_KEYS,
     SCORE_FILE_PATTERNS,
+    VIDEO_MME_TABLE_COLUMNS,
     VINOGROUND_TABLE_COLUMNS,
 )
 
@@ -252,6 +253,26 @@ class ResultLoader:
                 columns.extend(group_cols)
                 continue
 
+            if self._looks_like_videomme(sample):
+                group_cols = []
+                for metric_key, label in VIDEO_MME_TABLE_COLUMNS:
+                    group_cols.append({
+                        'id': f'{bench}::{metric_key}',
+                        'benchmark': bench,
+                        'label': label,
+                        'chart_label': f'{bench}/{label}',
+                        'metric_key': metric_key,
+                        'breakdown_source': bench,
+                    })
+                groups.append({
+                    'id': bench,
+                    'label': bench,
+                    'summary_column_id': f'{bench}::overall/overall',
+                    'columns': group_cols,
+                })
+                columns.extend(group_cols)
+                continue
+
             metric_key = self._primary_key_for_metrics(sample, bench)
             single_col = {
                 'id': bench,
@@ -285,6 +306,12 @@ class ResultLoader:
         if not isinstance(metrics, dict):
             return False
         return all(key in metrics for key, _ in VINOGROUND_TABLE_COLUMNS)
+
+    @staticmethod
+    def _looks_like_videomme(metrics):
+        if not isinstance(metrics, dict):
+            return False
+        return all(key in metrics for key, _ in VIDEO_MME_TABLE_COLUMNS)
 
     @staticmethod
     def _is_count_like_metric(key):
@@ -653,10 +680,10 @@ class ResultLoader:
             for key, value in obj.items():
                 new_key = f'{prefix}{key}' if not prefix else f'{prefix}/{key}'
                 if isinstance(value, (int, float)):
-                    out[new_key] = round(float(value), 2)
+                    out[new_key] = float(value)
                 elif isinstance(value, str):
                     try:
-                        out[new_key] = round(float(value), 2)
+                        out[new_key] = float(value)
                     except ValueError:
                         pass
                 elif isinstance(value, dict):
@@ -669,6 +696,6 @@ class ResultLoader:
                 elif isinstance(value, list) and len(value) == 2:
                     try:
                         correct, total = int(value[0]), int(value[1])
-                        out[new_key] = round(correct / total * 100, 2) if total > 0 else 0.0
+                        out[new_key] = (correct / total * 100) if total > 0 else 0.0
                     except (ValueError, ZeroDivisionError, TypeError):
                         pass

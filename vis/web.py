@@ -353,14 +353,14 @@ function renderTable() {
           const hasBreakdown = breakdowns[model]?.[col.id] != null;
           const cls = hasBreakdown ? 'clickable' : '';
           const onclick = hasBreakdown ? `onclick="toggleBreakdown('${esc(model)}','${esc(col.id)}')"` : '';
-          h += `<td class="${cls}" style="color:${color};font-weight:600" ${onclick}>${value.toFixed(1)}</td>`;
+          h += `<td class="${cls}" style="color:${color};font-weight:600" ${onclick}>${value.toFixed(2)}</td>`;
         } else {
           h += '<td style="color:#ccc">—</td>';
         }
       });
     });
     const avg = calcAvg(model);
-    h += `<td style="font-weight:600">${avg > -Infinity ? avg.toFixed(1) : '—'}</td>`;
+    h += `<td style="font-weight:600">${avg > -Infinity ? avg.toFixed(2) : '—'}</td>`;
     h += '</tr>';
 
     if (expandedCell && expandedCell.model === model) {
@@ -405,7 +405,7 @@ function renderBreakdownChart(model, columnId, bd) {
       data: vals,
       itemStyle: { color: '#3498db' },
       barWidth: 14,
-      label: { show: true, position: 'right', fontSize: 10, formatter: p => p.value.toFixed(1) },
+      label: { show: true, position: 'right', fontSize: 10, formatter: p => p.value.toFixed(2) },
     }],
     tooltip: { trigger: 'axis' },
   });
