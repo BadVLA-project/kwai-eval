@@ -1168,7 +1168,7 @@ qwen3vl_series = {
     ),
     "Qwen3-VL-8B-Instruct": partial(
         Qwen3VLChat,
-        model_path="/home/xuboshen/models/Qwen3-VL-8B-Instruct",
+        model_path="/m2v_intern/xuboshen/models/Qwen3-VL-8B-Instruct",
         use_custom_prompt=False,
         use_vllm=True,
         temperature=0.7, 
@@ -1180,7 +1180,7 @@ qwen3vl_series = {
     ),
     "Qwen3-VL-4B-Instruct": partial(
         Qwen3VLChat,
-        model_path="/home/xuboshen/models/Qwen3-VL-4B-Instruct",
+        model_path="/m2v_intern/xuboshen/models/Qwen3-VL-4B-Instruct",
         use_custom_prompt=False,
         use_vllm=True,
         temperature=0,

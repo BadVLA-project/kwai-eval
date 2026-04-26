@@ -28,12 +28,25 @@ MERGE_PREFIXES = ['AoTBench']
 ETBENCH_GROUPS = {
     'REF': {'key': 'REF/Acc', 'tasks': ['RAR/Acc', 'ECA/Acc', 'RVQ/Acc']},
     'GND': {'key': 'GND/F1', 'tasks': ['TVG/F1', 'EPM/F1', 'TAL/F1', 'EVS/F1', 'VHD/F1']},
+    'GND@.1': {'key': 'GND/F1@0.1', 'tasks': ['TVG/F1@0.1', 'EPM/F1@0.1', 'TAL/F1@0.1']},
+    'GND@.3': {'key': 'GND/F1@0.3', 'tasks': ['TVG/F1@0.3', 'EPM/F1@0.3', 'TAL/F1@0.3']},
+    'GND@.5': {'key': 'GND/F1@0.5', 'tasks': ['TVG/F1@0.5', 'EPM/F1@0.5', 'TAL/F1@0.5']},
+    'GND@.7': {'key': 'GND/F1@0.7', 'tasks': ['TVG/F1@0.7', 'EPM/F1@0.7', 'TAL/F1@0.7']},
     'CAP(F1)': {'key': 'CAP/F1', 'tasks': ['DVC/F1', 'SLC/F1']},
+    'CAP@.1': {'key': 'CAP/F1@0.1', 'tasks': ['DVC/F1@0.1', 'SLC/F1@0.1']},
+    'CAP@.3': {'key': 'CAP/F1@0.3', 'tasks': ['DVC/F1@0.3', 'SLC/F1@0.3']},
+    'CAP@.5': {'key': 'CAP/F1@0.5', 'tasks': ['DVC/F1@0.5', 'SLC/F1@0.5']},
+    'CAP@.7': {'key': 'CAP/F1@0.7', 'tasks': ['DVC/F1@0.7', 'SLC/F1@0.7']},
     'CAP(Sim)': {'key': 'CAP/SentSim', 'tasks': ['DVC/SentSim', 'SLC/SentSim']},
     'COM': {'key': 'COM/mRec', 'tasks': ['TEM/mRec', 'GVQ/mRec']},
 }
 
-ETBENCH_TABLE_ORDER = ['REF', 'GND', 'CAP(F1)', 'CAP(Sim)', 'COM', 'AVG']
+ETBENCH_TABLE_ORDER = [
+    'REF',
+    'GND', 'GND@.1', 'GND@.3', 'GND@.5', 'GND@.7',
+    'CAP(F1)', 'CAP@.1', 'CAP@.3', 'CAP@.5', 'CAP@.7',
+    'CAP(Sim)', 'COM', 'AVG',
+]
 
 VINOGROUND_TABLE_COLUMNS = [
     ('text_score', 'Text'),

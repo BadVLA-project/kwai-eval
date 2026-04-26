@@ -1429,17 +1429,32 @@ class ETBench(VideoBaseDataset):
 
         # -- GND: mean F1(tvg, epm, tal, evs, vhd) --
         gnd_tasks = [t for t in ('tvg', 'epm', 'tal', 'evs', 'vhd') if t in collected]
+        iou_thresholds = ('0.1', '0.3', '0.5', '0.7')
         for t in gnd_tasks:
-            results[f'{t.upper()}/F1'] = round(collected[t].get('F1', 0) * 100, 2)
+            d = collected[t]
+            results[f'{t.upper()}/F1'] = round(d.get('F1', 0) * 100, 2)
+            for thr in iou_thresholds:
+                key = f'F1@{thr}'
+                if key in d:
+                    results[f'{t.upper()}/{key}'] = round(d[key] * 100, 2)
         if gnd_tasks:
             results['GND/F1'] = round(
                 sum(collected[t].get('F1', 0) for t in gnd_tasks) / len(gnd_tasks) * 100, 2)
+            for thr in iou_thresholds:
+                key = f'F1@{thr}'
+                vals = [collected[t][key] for t in gnd_tasks if key in collected[t]]
+                if vals:
+                    results[f'GND/{key}'] = round(sum(vals) / len(vals) * 100, 2)
 
         # -- CAP: per task F1 + NLP, then mean F1 and mean SentSim --
         cap_tasks = [t for t in ('dvc', 'slc') if t in collected]
         for t in cap_tasks:
             d = collected[t]
             results[f'{t.upper()}/F1'] = round(d.get('F1', 0) * 100, 2)
+            for thr in iou_thresholds:
+                key = f'F1@{thr}'
+                if key in d:
+                    results[f'{t.upper()}/{key}'] = round(d[key] * 100, 2)
             results[f'{t.upper()}/SentSim'] = round(d.get('SentSim', 0) * 100, 2)
             for k in ('Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr'):
                 if k in d:
@@ -1447,6 +1462,11 @@ class ETBench(VideoBaseDataset):
         if cap_tasks:
             results['CAP/F1'] = round(
                 sum(collected[t].get('F1', 0) for t in cap_tasks) / len(cap_tasks) * 100, 2)
+            for thr in iou_thresholds:
+                key = f'F1@{thr}'
+                vals = [collected[t][key] for t in cap_tasks if key in collected[t]]
+                if vals:
+                    results[f'CAP/{key}'] = round(sum(vals) / len(vals) * 100, 2)
             results['CAP/SentSim'] = round(
                 sum(collected[t].get('SentSim', 0) for t in cap_tasks) / len(cap_tasks) * 100, 2)
 
@@ -1493,4 +1513,3 @@ class ETBench(VideoBaseDataset):
             acc_file,
         )
         return results
-
