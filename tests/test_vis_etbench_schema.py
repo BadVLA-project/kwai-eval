@@ -54,3 +54,26 @@ def test_etbench_threshold_columns_are_visible(tmp_path):
         'EPM/F1@0.1': 50.0,
         'TAL/F1@0.1': 55.3,
     }
+
+
+def test_loader_skips_broken_score_symlinks(tmp_path):
+    model = 'Qwen3-VL-4B-Instruct'
+    model_dir = tmp_path / model
+    model_dir.mkdir()
+    valid_score = model_dir / f'{model}_ETBench_adaptive_score.json'
+    valid_score.write_text(json.dumps({
+        'REF/Acc': 50.0,
+        'GND/F1': 40.0,
+        'CAP/F1': 30.0,
+        'CAP/SentSim': 20.0,
+        'COM/mRec': 10.0,
+        'AVG': 30.0,
+    }), encoding='utf-8')
+    broken_score = model_dir / f'{model}_TimeLensBench_Charades_adaptive_score.json'
+    broken_score.symlink_to(model_dir / 'deleted_score.json')
+
+    loader = ResultLoader(str(tmp_path))
+
+    assert 'ETBench_adaptive' in loader.benchmarks
+    assert 'TimeLensBench_Charades_adaptive' not in loader.benchmarks
+    assert loader.load_breakdown(model, 'TimeLensBench_Charades_adaptive') is None

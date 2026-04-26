@@ -63,6 +63,7 @@ class ResultLoader:
                 pattern = os.path.join(model_dir, 'T*', f'*{suffix}.{ext}')
                 score_files.extend(glob.glob(pattern))
 
+            score_files = sorted({fpath for fpath in score_files if os.path.isfile(fpath)})
             if not score_files:
                 continue
 
@@ -410,14 +411,20 @@ class ResultLoader:
         if path in self._data_cache:
             return self._data_cache[path]
 
-        if path.endswith('.csv'):
-            data = self._load_csv(path)
-        elif path.endswith('.xlsx'):
-            data = self._load_xlsx(path)
-        elif path.endswith('.json'):
-            data = self._load_json(path)
-        else:
+        if not os.path.isfile(path):
             data = None
+        else:
+            try:
+                if path.endswith('.csv'):
+                    data = self._load_csv(path)
+                elif path.endswith('.xlsx'):
+                    data = self._load_xlsx(path)
+                elif path.endswith('.json'):
+                    data = self._load_json(path)
+                else:
+                    data = None
+            except (FileNotFoundError, OSError):
+                data = None
 
         self._data_cache[path] = data
         return data
