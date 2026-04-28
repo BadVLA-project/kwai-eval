@@ -3,6 +3,12 @@ from ..smp import *
 from ..smp.file import get_intermediate_file_path, get_file_extension
 from .video_base import VideoBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
+from .videomme_utils import (
+    find_videomme_video_dir,
+    resolve_videomme_local_dir,
+    resolve_videomme_video_path,
+    videomme_video_relpath,
+)
 
 FAIL_MSG = 'Failed to obtain answer via API.'
 
@@ -71,7 +77,9 @@ Select the best answer to the following multiple-choice question based on the vi
                 return False
             data = load(data_file)
             for video_pth in data['video_path']:
-                if not osp.exists(osp.join(pth, video_pth)):
+                candidate = osp.join(pth, video_pth)
+                video_id = osp.splitext(osp.basename(str(video_pth)))[0]
+                if not osp.exists(candidate) and not osp.exists(resolve_videomme_video_path(pth, video_id)):
                     return False
             return True
 
@@ -79,7 +87,7 @@ Select the best answer to the following multiple-choice question based on the vi
             import zipfile
             # 为了兼容性，确保 video 目录存在
             base_dir = pth
-            target_dir = os.path.join(pth, 'video/')
+            target_dir = find_videomme_video_dir(pth)
 
             # 如果 video 文件夹已经存在且不为空，假设已解压，直接跳过
             if os.path.exists(target_dir) and len(os.listdir(target_dir)) > 0:
@@ -148,7 +156,7 @@ Select the best answer to the following multiple-choice question based on the vi
             data_file_df = pd.read_parquet(parquet_file)
             data_file_df = data_file_df.assign(index=range(len(data_file_df)))
             data_file_df['video'] = data_file_df['videoID']
-            data_file_df['video_path'] = data_file_df['videoID'].apply(lambda x: f'./video/{x}.mp4')
+            data_file_df['video_path'] = data_file_df['videoID'].apply(lambda x: videomme_video_relpath(pth, x))
             data_file_df['subtitle_path'] = data_file_df['videoID'].apply(lambda x: f'./subtitle/{x}.srt')
             data_file_df['candidates'] = data_file_df['options'].apply(lambda x: x.tolist())
 
@@ -160,11 +168,10 @@ Select the best answer to the following multiple-choice question based on the vi
 
         # === 核心修改逻辑 ===
 
-        # 1. 优先使用你指定的绝对路径
-        # 根据你的 ls 结果：/m2v_intern/xuboshen/zgw/LMUData/datasets/lmms-lab/Video-MME
-        local_target_path = "/m2v_intern/xuboshen/zgw/LMUData/datasets/lmms-lab/Video-MME"
+        # 1. 优先使用本地路径，可用 VIDEO_MME_DIR / VIDEOMME_DIR 覆盖。
+        local_target_path = resolve_videomme_local_dir()
 
-        if os.path.exists(local_target_path):
+        if local_target_path and os.path.exists(local_target_path):
             print(f"Loading Video-MME from local path: {local_target_path}")
             dataset_path = local_target_path
 
@@ -174,7 +181,7 @@ Select the best answer to the following multiple-choice question based on the vi
 
         else:
             # 2. 如果本地路径不存在，才尝试走原来的逻辑（作为保底，或者你可以选择直接报错）
-            print(f"Local path {local_target_path} not found. Trying HuggingFace cache...")
+            print(f"Local Video-MME path {local_target_path} not found. Trying HuggingFace cache...")
 
             cache_path = get_cache_path(repo_id)
             if cache_path is not None and check_integrity(cache_path):
@@ -194,7 +201,7 @@ Select the best answer to the following multiple-choice question based on the vi
 
     def save_video_frames(self, video, video_llm=False):
 
-        vid_path = osp.join(self.data_root, 'video', video + '.mp4')
+        vid_path = resolve_videomme_video_path(self.data_root, video)
         import decord
         vid = decord.VideoReader(vid_path)
         video_info = {
@@ -269,7 +276,7 @@ Select the best answer to the following multiple-choice question based on the vi
 
         message = [dict(type='text', value=self.SYS)]
         if video_llm:
-            message.append(self.make_video_struct(osp.join(self.data_root, 'video', line['video'] + '.mp4')))
+            message.append(self.make_video_struct(resolve_videomme_video_path(self.data_root, line['video'])))
         else:
             for im in frames:
                 message.append(dict(type='image', value=im))
