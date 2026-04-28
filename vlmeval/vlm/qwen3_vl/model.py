@@ -124,7 +124,7 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.post_process = post_process
 
         # USE_COT env var allows runtime override without changing config entries.
-        # USE_COT=0 (default) : greedy, "Answer with the option letter only."
+        # USE_COT=0 (default) : greedy direct answer; MCQ datasets get an option-letter prompt.
         # USE_COT=1 or USE_COT=boxed : boxed{} format — model decides to think or not
         # USE_COT=tags : legacy <think>/<answer> tag format
         env_cot = os.environ.get('USE_COT', '0')
@@ -153,8 +153,10 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                 )
                 self.extract_think_answer = False
                 self.post_process = True
+            self.post_prompt_mode = 'cot'
         else:
             self.post_prompt = 'Answer with the option letter only.'
+            self.post_prompt_mode = 'mcq_direct'
             self.extract_think_answer = False
             # Non-CoT MCQ: short answers only. Large max_new_tokens wastes
             # KV-cache and cripples vLLM concurrency (e.g. 32768 → only 2-3
@@ -449,9 +451,26 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         if managed_prompt:
             return content
 
-        if self.post_prompt:
+        if self._should_apply_post_prompt(dataset):
             content = self._rewrite_prompt_for_cot(content)
         return content
+
+    def _should_apply_post_prompt(self, dataset: str | None) -> bool:
+        if not self.post_prompt:
+            return False
+
+        if getattr(self, 'post_prompt_mode', None) != 'mcq_direct':
+            return True
+
+        if dataset is None:
+            return True
+
+        try:
+            from vlmeval.dataset import DATASET_TYPE
+            dataset_type = DATASET_TYPE(dataset, default=None)
+        except Exception:
+            dataset_type = None
+        return dataset_type == 'MCQ'
 
     # Patterns that instruct the model to answer directly (no CoT).
     # Used by _rewrite_prompt_for_cot to strip them before appending a CoT instruction.

@@ -1,4 +1,5 @@
 import importlib.util
+import csv
 from pathlib import Path
 
 
@@ -81,6 +82,26 @@ def test_convert_dream_jsonl_to_tsv_normalizes_generic_rows(tmp_path):
     text = tsv.read_text(encoding='utf-8')
     assert 'index\tvideo\tquestion\tanswer\tevents' in text
     assert '7\tvideo/7.mp4\tDescribe.\tA person walks.' in text
+
+
+def test_convert_dream_jsonl_to_tsv_accepts_official_metadata_rows(tmp_path):
+    utils = load_dream_utils()
+    jsonl = tmp_path / 'dream1k_bench.jsonl'
+    jsonl.write_text(
+        '{"idx": 0, "video_file": "video/0.mp4", '
+        '"description": "A person picks up a cup.", '
+        '"events": ["A person picks up a cup."]}\n',
+        encoding='utf-8',
+    )
+    tsv = tmp_path / 'dream1k_bench.vlmeval.tsv'
+
+    utils.convert_dream_jsonl_to_tsv(str(jsonl), str(tsv))
+
+    text = tsv.read_text(encoding='utf-8')
+    assert '0\tvideo/0.mp4\tDescribe the video in detail.\tA person picks up a cup.' in text
+    with tsv.open(encoding='utf-8') as f:
+        row = next(csv.DictReader(f, delimiter='\t'))
+    assert row['events'] == '["A person picks up a cup."]'
 
 
 def test_resolve_dream_converted_tsv_uses_cache_dir(tmp_path):

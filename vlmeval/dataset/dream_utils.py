@@ -2,6 +2,7 @@ import os
 import os.path as osp
 import csv
 import json
+import ast
 
 
 DEFAULT_DREAM1K_DIRS = (
@@ -97,6 +98,44 @@ def _text_from_messages(row, role, prefer_reference=False):
     return ''
 
 
+def _clean_text(value):
+    if value is None:
+        return ''
+    value = str(value)
+    if value in {'', '<placeholder>', 'placeholder', 'None', 'nan'}:
+        return ''
+    return value
+
+
+def _first_nonempty(*values):
+    for value in values:
+        if isinstance(value, str):
+            value = _clean_text(value)
+        if value is not None and value != '':
+            return value
+    return ''
+
+
+def _first_nested_value(obj, keys):
+    if isinstance(obj, dict):
+        for key in keys:
+            value = obj.get(key)
+            if isinstance(value, str):
+                value = _clean_text(value)
+            if value is not None and value != '':
+                return value
+        for value in obj.values():
+            found = _first_nested_value(value, keys)
+            if found != '':
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = _first_nested_value(item, keys)
+            if found != '':
+                return found
+    return ''
+
+
 def _video_from_messages(row):
     for message in row.get('messages', []):
         for content in message.get('content', []):
@@ -104,47 +143,91 @@ def _video_from_messages(row):
                 continue
             video = content.get('video')
             if isinstance(video, dict):
-                return video.get('video_file') or video.get('path') or video.get('value') or ''
+                return _first_nonempty(video.get('video_file'), video.get('path'), video.get('value'))
             if isinstance(video, str):
-                return video
+                return _clean_text(video)
     return ''
+
+
+def _serialize_events(events):
+    if isinstance(events, (list, dict)):
+        return json.dumps(events, ensure_ascii=False)
+    if events is None:
+        return ''
+    if isinstance(events, str):
+        events = events.strip()
+        if not events:
+            return ''
+        if events[0] in '[{':
+            for parser in (json.loads, ast.literal_eval):
+                try:
+                    parsed = parser(events)
+                    if isinstance(parsed, (list, dict)):
+                        return json.dumps(parsed, ensure_ascii=False)
+                except Exception:
+                    pass
+        return events
+    return str(events)
 
 
 def normalize_dream_jsonl_row(row, row_idx=0):
     idx = row.get('index', row.get('idx', row.get('vid', row_idx)))
-    video = (
-        row.get('video')
-        or row.get('video_name')
-        or row.get('video_path')
-        or _video_from_messages(row)
-        or f'video/{row.get("vid", idx)}.mp4'
+    video = _first_nonempty(
+        row.get('video'),
+        row.get('video_file'),
+        row.get('video_name'),
+        row.get('video_path'),
+        row.get('file'),
+        row.get('path'),
+        _video_from_messages(row),
+        f'video/{row.get("vid", idx)}.mp4',
     )
-    question = (
-        row.get('question')
-        or row.get('prompt')
-        or _text_from_messages(row, 'user')
-        or 'Describe the video in detail.'
+    question = _first_nonempty(
+        row.get('question'),
+        row.get('prompt'),
+        row.get('instruction'),
+        row.get('query'),
+        _text_from_messages(row, 'user'),
+        'Describe the video in detail.',
     )
-    answer = (
-        row.get('answer')
-        or row.get('response')
-        or row.get('caption')
-        or _text_from_messages(row, 'assistant', prefer_reference=True)
+    answer = _first_nonempty(
+        row.get('answer'),
+        row.get('response'),
+        row.get('caption'),
+        row.get('description'),
+        row.get('video_description'),
+        row.get('detailed_caption'),
+        row.get('gt_caption'),
+        _text_from_messages(row, 'assistant', prefer_reference=True),
+        _first_nested_value(
+            row,
+            (
+                'answer',
+                'response',
+                'caption',
+                'description',
+                'video_description',
+                'detailed_caption',
+                'gt_caption',
+                'reference',
+            ),
+        ),
     )
-    events = row.get('events')
-    if events is None and isinstance(row.get('extra_info'), dict):
-        events = row['extra_info'].get('events')
-    if isinstance(events, (list, dict)):
-        events = json.dumps(events, ensure_ascii=False)
-    elif events is None:
-        events = ''
+    events = _first_nonempty(
+        row.get('events'),
+        row.get('event'),
+        row.get('event_list'),
+        row.get('key_events'),
+        row.get('extra_info', {}).get('events') if isinstance(row.get('extra_info'), dict) else None,
+        _first_nested_value(row, ('events', 'event_list', 'key_events')),
+    )
 
     return {
         'index': idx,
         'video': video,
         'question': question,
         'answer': answer,
-        'events': events,
+        'events': _serialize_events(events),
     }
 
 
