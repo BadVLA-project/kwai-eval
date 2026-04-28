@@ -8,3 +8,10 @@ def test_vdc_adaptive_dataset_is_registered():
     config = (ROOT / 'vlmeval' / 'dataset' / 'video_dataset_config.py').read_text(encoding='utf-8')
 
     assert "'VDC_adaptive': partial(VDC, dataset='VDC', adaptive=True)" in config
+
+
+def test_vdc_constructor_accepts_and_forwards_adaptive_flag():
+    vdc_py = (ROOT / 'vlmeval' / 'dataset' / 'vdc.py').read_text(encoding='utf-8')
+
+    assert "adaptive=False" in vdc_py
+    assert "super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps, adaptive=adaptive)" in vdc_py

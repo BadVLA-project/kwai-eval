@@ -124,8 +124,8 @@ class VDC(VideoBaseDataset):
 
     TYPE = 'Video-VQA'
 
-    def __init__(self, dataset='VDC', pack=False, nframe=0, fps=-1, subset='all', limit=1.0):
-        super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps)
+    def __init__(self, dataset='VDC', pack=False, nframe=0, fps=-1, adaptive=False, subset='all', limit=1.0):
+        super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps, adaptive=adaptive)
 
         if subset == 'all':
             pass
