@@ -21,6 +21,26 @@ def test_resolve_videomme_local_dir_prefers_env(tmp_path):
     assert utils.resolve_videomme_local_dir(env={'VIDEO_MME_DIR': str(local_dir)}) == str(local_dir)
 
 
+def test_resolve_videomme_local_dir_accepts_hf_cache_repo_root(tmp_path):
+    utils = load_videomme_utils()
+    repo_root = tmp_path / 'datasets--lmms-lab--Video-MME'
+    snapshot = repo_root / 'snapshots' / 'abc123'
+    (snapshot / 'videomme').mkdir(parents=True)
+    (snapshot / 'videomme' / 'test-00000-of-00001.parquet').write_bytes(b'')
+
+    assert utils.resolve_videomme_local_dir(env={'VIDEO_MME_DIR': str(repo_root)}) == str(snapshot)
+
+
+def test_resolve_videomme_local_dir_uses_huggingface_hub_cache(tmp_path):
+    utils = load_videomme_utils()
+    repo_root = tmp_path / 'datasets--lmms-lab--Video-MME'
+    snapshot = repo_root / 'snapshots' / 'abc123'
+    (snapshot / 'videomme').mkdir(parents=True)
+    (snapshot / 'videomme' / 'test-00000-of-00001.parquet').write_bytes(b'')
+
+    assert utils.resolve_videomme_local_dir(env={'HUGGINGFACE_HUB_CACHE': str(tmp_path)}) == str(snapshot)
+
+
 def test_find_videomme_video_dir_accepts_videos_layout(tmp_path):
     utils = load_videomme_utils()
     dataset = tmp_path / 'Video-MME'

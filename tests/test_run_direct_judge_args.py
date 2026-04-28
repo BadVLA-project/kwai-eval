@@ -17,3 +17,9 @@ def test_run_direct_defaults_to_1024_generation_tokens():
     script = (ROOT / 'run_direct.sh').read_text(encoding='utf-8')
 
     assert 'export MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-1024}"' in script
+
+
+def test_run_direct_sets_readonly_videomme_cache_default():
+    script = (ROOT / 'run_direct.sh').read_text(encoding='utf-8')
+
+    assert 'export VIDEO_MME_DIR="${VIDEO_MME_DIR:-/ytech_m2v5_hdd/workspace/kling_mm/Datasets/VLMEvalKit_Dataset_Cache/HFCache/datasets--lmms-lab--Video-MME}"' in script
