@@ -157,5 +157,5 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo ">>> 确认无误后，执行: bash rerun_fixed.sh --execute"
 else
   echo "  启动评测..."
-  REUSE=1 bash run_direct_2gpu.sh
+  REUSE=1 bash run_direct.sh
 fi

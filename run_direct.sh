@@ -27,6 +27,8 @@
 #   # Use with tmux (recommended for long runs)
 #   tmux new -s eval
 #   bash run_direct.sh 2>&1 | tee /tmp/eval_direct.log
+
+#  DATA="ETBench_adaptive" bash run_direct.sh
 # ==========================================================================
 set -euo pipefail
 set -x
@@ -99,7 +101,7 @@ else
 fi
 
 # Decode timeout (increase for long videos on slow storage)
-export VLLM_DECODE_TIMEOUT="${VLLM_DECODE_TIMEOUT:-300}"
+export VLLM_DECODE_TIMEOUT="${VLLM_DECODE_TIMEOUT:-900}"
 
 # ===========================================================================
 # 4. HF / offline settings
@@ -128,6 +130,11 @@ if [ -n "${DATA:-}" ]; then
   read -ra DATASETS <<< "${DATA}"
 else
   DATASETS=(
+    TimeLensBench_Charades_adaptive
+    TimeLensBench_ActivityNet_adaptive
+    TimeLensBench_QVHighlights_adaptive
+    Vinoground_adaptive
+    Video-TT_adaptive
     AoTBench_ReverseFilm_adaptive
     AoTBench_UCF101_adaptive
     AoTBench_Rtime_t2v_adaptive
@@ -138,13 +145,6 @@ else
     Video-MME_adaptive
     ETBench_adaptive
     MLVU_MCQ_adaptive
-    DREAM-1K_adaptive
-    TimeLensBench_Charades_adaptive
-    TimeLensBench_ActivityNet_adaptive
-    TimeLensBench_QVHighlights_adaptive
-    VideoMMMU_adaptive
-    Vinoground_adaptive
-    Video-TT_adaptive
   )
 fi
 
@@ -157,7 +157,6 @@ if [ -n "${MODELS:-}" ]; then
 else
   MODEL_LIST=(
     Qwen3-VL-4B-Instruct
-    Qwen3-VL-8B-Instruct
   )
 fi
 
@@ -291,3 +290,16 @@ cleanup_filler() {
 trap cleanup_filler EXIT
 
 "${CMD[@]}"
+# AoTBench_ReverseFilm_adaptive
+#     AoTBench_UCF101_adaptive
+#     AoTBench_Rtime_t2v_adaptive
+#     AoTBench_Rtime_v2t_adaptive
+#     AoTBench_QA_adaptive
+#     MVBench_MP4_adaptive
+#     Video_Holmes_adaptive
+#     Video-MME_adaptive
+#     ETBench_adaptive
+#     MLVU_MCQ_adaptive
+#     TimeLensBench_Charades_adaptive
+#     TimeLensBench_ActivityNet_adaptive
+#     TimeLensBench_QVHighlights_adaptive
