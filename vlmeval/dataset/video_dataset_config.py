@@ -216,6 +216,18 @@ dream_1k_dataset = {
     'DREAM-1K_2fps': partial(DREAM, dataset='DREAM-1K', fps=2.0),
     'DREAM-1K_1fps': partial(DREAM, dataset='DREAM-1K', fps=1.0),
     'DREAM-1K_0.5fps': partial(DREAM, dataset='DREAM-1K', fps=0.5),
+    'DREAM_local': partial(
+        DREAM, dataset='DREAM-1K', nframe=8, prompt_style='local', dataset_name_alias='DREAM_local'),
+    'DREAM_local_8frame': partial(
+        DREAM, dataset='DREAM-1K', nframe=8, prompt_style='local', dataset_name_alias='DREAM_local_8frame'),
+    'DREAM_local_64frame': partial(
+        DREAM, dataset='DREAM-1K', nframe=64, prompt_style='local', dataset_name_alias='DREAM_local_64frame'),
+    'DREAM_local_2fps': partial(
+        DREAM, dataset='DREAM-1K', fps=2.0, prompt_style='local', dataset_name_alias='DREAM_local_2fps'),
+    'DREAM_local_1fps': partial(
+        DREAM, dataset='DREAM-1K', fps=1.0, prompt_style='local', dataset_name_alias='DREAM_local_1fps'),
+    'DREAM_local_0.5fps': partial(
+        DREAM, dataset='DREAM-1K', fps=0.5, prompt_style='local', dataset_name_alias='DREAM_local_0.5fps'),
 }
 
 supported_video_datasets = {}
@@ -390,6 +402,8 @@ adaptive_dataset = {
     'MLVU_MCQ_adaptive': partial(MLVU_MCQ, dataset='MLVU_MCQ', adaptive=True),
     # DREAM-1K
     'DREAM-1K_adaptive': partial(DREAM, dataset='DREAM-1K', adaptive=True),
+    'DREAM_local_adaptive': partial(
+        DREAM, dataset='DREAM-1K', adaptive=True, prompt_style='local', dataset_name_alias='DREAM_local_adaptive'),
     # VDC
     'VDC_adaptive': partial(VDC, dataset='VDC', adaptive=True),
     # CharadesSTA

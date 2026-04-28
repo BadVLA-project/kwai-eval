@@ -9,7 +9,7 @@ fi
 
 MODEL_NAME="$1"
 WORK_DIR="${2:-${WORK_DIR:-./outputs}}"
-DATASET="${DATASET:-DREAM-1K_adaptive}"
+DATASET="${DATASET:-${DATA:-DREAM_local_adaptive}}"
 API_NPROC="${API_NPROC:-4}"
 MAX_COMPLETION_TOKENS="${MAX_COMPLETION_TOKENS:-16384}"
 JUDGE_ARGS="${JUDGE_ARGS:-{\"use_azure_sdk\": true, \"max_completion_tokens\": ${MAX_COMPLETION_TOKENS}}}"

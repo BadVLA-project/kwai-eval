@@ -17,6 +17,13 @@ DREAM_TSV_ENV_KEYS = ('DREAM1K_TSV', 'DREAM_1K_TSV')
 DREAM_ANN_ENV_KEYS = ('DREAM1K_ANN', 'DREAM_1K_ANN', 'DREAM1K_JSONL')
 DREAM_CACHE_ENV_KEYS = ('DREAM1K_CACHE_DIR', 'DREAM_1K_CACHE_DIR')
 
+DREAM_OFFICIAL_PROMPT = 'Describe the video in detail.'
+DREAM_LOCAL_PROMPT = (
+    'Describe the video as a chronological list of visible events. '
+    'Focus only on actions, object interactions, and character movements. '
+    'Do not describe mood, atmosphere, intentions, or background unless needed to explain an event.'
+)
+
 
 def first_env(env, keys):
     for key in keys:
@@ -80,6 +87,18 @@ def resolve_dream_cache_dir(lmu_root=None, env=None):
 def resolve_dream_converted_tsv(lmu_root=None, env=None):
     cache_dir = resolve_dream_cache_dir(lmu_root=lmu_root, env=env)
     return osp.join(cache_dir, 'DREAM-1K.from_jsonl.tsv')
+
+
+def resolve_dream_prompt(question=None, prompt_style='official', prompt_override=None):
+    if prompt_override:
+        return prompt_override
+
+    style = (prompt_style or 'official').lower()
+    if style in {'official', 'default', 'source'}:
+        return _clean_text(question) or DREAM_OFFICIAL_PROMPT
+    if style in {'local', 'event', 'event_caption'}:
+        return DREAM_LOCAL_PROMPT
+    raise ValueError(f'Unknown DREAM prompt_style: {prompt_style}')
 
 
 def _text_from_messages(row, role, prefer_reference=False):
@@ -245,7 +264,7 @@ def normalize_dream_jsonl_row(row, row_idx=0):
         row.get('instruction'),
         row.get('query'),
         _text_from_messages(row, 'user'),
-        'Describe the video in detail.',
+        DREAM_OFFICIAL_PROMPT,
     )
     answer = _first_nonempty(
         row.get('answer'),

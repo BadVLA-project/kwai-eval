@@ -1,4 +1,5 @@
 import importlib.util
+import ast
 import csv
 from pathlib import Path
 
@@ -144,3 +145,56 @@ def test_resolve_dream_converted_tsv_uses_cache_dir(tmp_path):
     path = utils.resolve_dream_converted_tsv(env={'DREAM1K_CACHE_DIR': str(cache_dir)})
 
     assert path == str(cache_dir / 'DREAM-1K.from_jsonl.tsv')
+
+
+def test_dream_local_prompt_style_matches_event_caption_granularity():
+    utils = load_dream_utils()
+
+    prompt = utils.resolve_dream_prompt('Describe the video in detail.', prompt_style='local')
+
+    assert prompt == utils.DREAM_LOCAL_PROMPT
+    assert prompt == (
+        'Describe the video as a chronological list of visible events. '
+        'Focus only on actions, object interactions, and character movements. '
+        'Do not describe mood, atmosphere, intentions, or background unless needed to explain an event.'
+    )
+    assert 'mood, atmosphere, intentions' in prompt
+    assert utils.resolve_dream_prompt(
+        'Describe the video in detail.',
+        prompt_style='official',
+    ) == 'Describe the video in detail.'
+
+
+def _dict_entries_from_assignment(path, assignment_name):
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if any(isinstance(target, ast.Name) and target.id == assignment_name for target in node.targets):
+                return dict((ast.literal_eval(key), value) for key, value in zip(node.value.keys, node.value.values))
+    raise AssertionError(f'{assignment_name} assignment not found')
+
+
+def _keyword_value(call_node, keyword_name):
+    for keyword in call_node.keywords:
+        if keyword.arg == keyword_name:
+            return ast.literal_eval(keyword.value)
+    raise AssertionError(f'{keyword_name} keyword not found')
+
+
+def test_dream_local_adaptive_dataset_is_registered_with_local_prompt():
+    config_path = ROOT / 'vlmeval' / 'dataset' / 'video_dataset_config.py'
+    entries = _dict_entries_from_assignment(config_path, 'adaptive_dataset')
+
+    local_call = entries['DREAM_local_adaptive']
+
+    assert isinstance(local_call, ast.Call)
+    assert _keyword_value(local_call, 'dataset') == 'DREAM-1K'
+    assert _keyword_value(local_call, 'adaptive') is True
+    assert _keyword_value(local_call, 'prompt_style') == 'local'
+    assert _keyword_value(local_call, 'dataset_name_alias') == 'DREAM_local_adaptive'
+
+
+def test_dream1k_direct_script_defaults_to_local_prompt_dataset():
+    script = (ROOT / 'scripts' / 'run_dream1k_direct.sh').read_text(encoding='utf-8')
+
+    assert 'export DATA="${DATA:-DREAM_local_adaptive}"' in script

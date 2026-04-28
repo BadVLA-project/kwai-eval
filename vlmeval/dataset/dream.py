@@ -16,6 +16,7 @@ from .dream_utils import (
     resolve_dream_converted_tsv,
     resolve_dream_annotation_file,
     resolve_dream_local_dir,
+    resolve_dream_prompt,
     resolve_dream_video_source,
     has_mp4_files,
 )
@@ -64,10 +65,25 @@ class DREAM(VideoBaseDataset):
     TYPE = 'DREAM-1K'
     MD5 = 'e8f0a486429bb6c27806bc0669e0d8b2'
 
-    def __init__(self, dataset='DREAM-1K', pack=False, nframe=0, fps=-1, adaptive=False):
+    def __init__(
+        self,
+        dataset='DREAM-1K',
+        pack=False,
+        nframe=0,
+        fps=-1,
+        adaptive=False,
+        prompt_style='official',
+        prompt_override=None,
+        dataset_name_alias=None,
+    ):
+        self.prompt_style = prompt_style
+        self.prompt_override = prompt_override
+        self.dataset_name_alias = dataset_name_alias
         if not adaptive and nframe == 0 and fps == -1:
             nframe = 8
         super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps, adaptive=adaptive)
+        if dataset_name_alias:
+            self.dataset_name = dataset_name_alias
 
     @staticmethod
     def _video_id(video):
@@ -242,7 +258,12 @@ class DREAM(VideoBaseDataset):
             for frame_path in frames:
                 message.append(dict(type='image', value=frame_path))
 
-        message.append(dict(type='text', value=line['question']))
+        question = resolve_dream_prompt(
+            line['question'],
+            prompt_style=self.prompt_style,
+            prompt_override=self.prompt_override,
+        )
+        message.append(dict(type='text', value=question))
         return message
 
     @classmethod
