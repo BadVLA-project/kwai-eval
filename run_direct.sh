@@ -169,6 +169,8 @@ RETRY_NAN="${RETRY_NAN:-0}"
 DELAY="${DELAY:-15}"
 EVAL_ID_MODE="${EVAL_ID_MODE:-day}"
 EVAL_ID="${EVAL_ID:-}"
+JUDGE="${JUDGE:-}"
+JUDGE_ARGS="${JUDGE_ARGS:-}"
 
 # ===========================================================================
 # 9. NaN retry: rebuild pkl files so failed samples get re-attempted
@@ -209,11 +211,18 @@ CMD=(
   --
   run.py
   --use-vllm
-  --judge exact_matching
   --data "${DATASETS[@]}"
   --model "${MODEL_LIST[@]}"
   --work-dir "${WORK_DIR}"
 )
+
+if [ -n "${JUDGE}" ]; then
+  CMD+=(--judge "${JUDGE}")
+fi
+
+if [ -n "${JUDGE_ARGS}" ]; then
+  CMD+=(--judge-args "${JUDGE_ARGS}")
+fi
 
 if [ -n "${EVAL_ID}" ]; then
   CMD+=(--eval-id "${EVAL_ID}")
