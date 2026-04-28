@@ -153,7 +153,6 @@ if [ -n "${MODELS:-}" ]; then
   read -ra MODEL_LIST <<< "${MODELS}"
 else
   MODEL_LIST=(
-    VideoSSR-8B
     Qwen3-VL-4B-Instruct
     Qwen3-VL-8B-Instruct
   )
@@ -162,7 +161,7 @@ fi
 # ===========================================================================
 # 8. Work directory and run settings
 # ===========================================================================
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_final}"
 REUSE="${REUSE:-0}"
 RETRY_NAN="${RETRY_NAN:-0}"
 DELAY="${DELAY:-15}"
@@ -245,9 +244,9 @@ fi
 echo "=================================================================="
 
 # ===========================================================================
-# 11. GPU filler (optional, keeps utilization high during idle gaps)
+# 11. GPU filler (optional, disabled by default for direct eval)
 # ===========================================================================
-GPU_FILLER="${GPU_FILLER:-1}"
+GPU_FILLER="${GPU_FILLER:-0}"
 FILLER_PID=""
 
 # Build GPU list from offset
