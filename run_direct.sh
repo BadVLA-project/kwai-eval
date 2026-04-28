@@ -73,6 +73,7 @@ export FORCE_QWENVL_VIDEO_READER="${FORCE_QWENVL_VIDEO_READER:-decord}"
 # Direct answer mode: USE_COT=0 → greedy, temperature=0
 export USE_COT="${USE_COT:-0}"
 export TEMPERATURE="${TEMPERATURE:-0}"
+export MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-1024}"
 export TIMELENS_EVAL_MODE="${TIMELENS_EVAL_MODE:-timelens}"
 
 # ===========================================================================

@@ -325,7 +325,7 @@ perceptiontest_dataset = {
 }
 
 # ---------------------------------------------------------------------------
-# Adaptive sampling: ≤30s → 2fps, 30–256s → 1fps, >256s → uniform 256 frames
+# Adaptive sampling: ≤60s → 2fps, 60–256s → 1fps, >256s → uniform 256 frames
 # ---------------------------------------------------------------------------
 adaptive_dataset = {
     # AoTBench
