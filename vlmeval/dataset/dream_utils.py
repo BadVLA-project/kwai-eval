@@ -136,6 +136,18 @@ def _first_nested_value(obj, keys):
     return ''
 
 
+def _normalize_video_ref(value):
+    value = _clean_text(value)
+    if not value:
+        return ''
+    value = value.replace('\\', '/')
+    if value.startswith('video/'):
+        return value
+    if value.lower().endswith('.mp4'):
+        return f'video/{osp.basename(value)}'
+    return value
+
+
 def _video_from_messages(row):
     for message in row.get('messages', []):
         for content in message.get('content', []):
@@ -172,16 +184,18 @@ def _serialize_events(events):
 
 def normalize_dream_jsonl_row(row, row_idx=0):
     idx = row.get('index', row.get('idx', row.get('vid', row_idx)))
-    video = _first_nonempty(
+    video = _normalize_video_ref(_first_nonempty(
         row.get('video'),
         row.get('video_file'),
         row.get('video_name'),
         row.get('video_path'),
+        row.get('video_frame_dir'),
+        row.get('frame_dir'),
         row.get('file'),
         row.get('path'),
         _video_from_messages(row),
         f'video/{row.get("vid", idx)}.mp4',
-    )
+    ))
     question = _first_nonempty(
         row.get('question'),
         row.get('prompt'),
@@ -194,6 +208,8 @@ def normalize_dream_jsonl_row(row, row_idx=0):
         row.get('answer'),
         row.get('response'),
         row.get('caption'),
+        row.get('GT_description'),
+        row.get('gt_description'),
         row.get('description'),
         row.get('video_description'),
         row.get('detailed_caption'),
@@ -205,6 +221,8 @@ def normalize_dream_jsonl_row(row, row_idx=0):
                 'answer',
                 'response',
                 'caption',
+                'GT_description',
+                'gt_description',
                 'description',
                 'video_description',
                 'detailed_caption',
@@ -218,8 +236,10 @@ def normalize_dream_jsonl_row(row, row_idx=0):
         row.get('event'),
         row.get('event_list'),
         row.get('key_events'),
+        row.get('GT_events'),
+        row.get('gt_events'),
         row.get('extra_info', {}).get('events') if isinstance(row.get('extra_info'), dict) else None,
-        _first_nested_value(row, ('events', 'event_list', 'key_events')),
+        _first_nested_value(row, ('events', 'event_list', 'key_events', 'GT_events', 'gt_events')),
     )
 
     return {
