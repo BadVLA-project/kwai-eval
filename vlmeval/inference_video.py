@@ -32,6 +32,29 @@ def _extract_prompt_text(struct):
     return '\n'.join(parts)
 
 
+def _should_append_post_prompt(model, dataset_name, struct):
+    post_prompt = getattr(model, 'post_prompt', None)
+    if not post_prompt:
+        return False
+    if any(s.get('type') == '_managed_prompt' for s in struct):
+        return False
+
+    should_apply = getattr(model, '_should_apply_post_prompt', None)
+    if callable(should_apply):
+        try:
+            return bool(should_apply(dataset_name))
+        except Exception:
+            return False
+    return True
+
+
+def _prompt_text_for_logging(model, dataset_name, struct):
+    prompt = _extract_prompt_text(struct)
+    if _should_append_post_prompt(model, dataset_name, struct):
+        prompt += '\n' + model.post_prompt
+    return prompt
+
+
 def _extract_frame_info(struct):
     """Extract frame count and sampling strategy from a prompt struct.
 
@@ -293,12 +316,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                 continue
             batch_indices.append(idx)
             batch_structs.append(struct)
-            _pt = _extract_prompt_text(struct)
-            # Only append post_prompt when the dataset does NOT manage format instructions.
-            _has_sentinel = any(s.get('type') == '_managed_prompt' for s in struct)
-            if getattr(model, 'post_prompt', None) and not _has_sentinel:
-                _pt += '\n' + model.post_prompt
-            prompts_dict[idx] = _pt
+            prompts_dict[idx] = _prompt_text_for_logging(model, dataset_name, struct)
             frame_info_dict[idx] = _extract_frame_info(struct)
 
         if batch_structs:
@@ -386,11 +404,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                 continue
             batch_indices.append(idx)
             batch_structs.append(struct)
-            _pt = _extract_prompt_text(struct)
-            _has_sentinel = any(s.get('type') == '_managed_prompt' for s in struct)
-            if getattr(model, 'post_prompt', None) and not _has_sentinel:
-                _pt += '\n' + model.post_prompt
-            prompts_dict[idx] = _pt
+            prompts_dict[idx] = _prompt_text_for_logging(model, dataset_name, struct)
             frame_info_dict[idx] = _extract_frame_info(struct)
 
         if batch_structs:
@@ -473,11 +487,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         if struct is None:
             continue
 
-        _pt = _extract_prompt_text(struct)
-        _has_sentinel = any(s.get('type') == '_managed_prompt' for s in struct)
-        if getattr(model, 'post_prompt', None) and not _has_sentinel:
-            _pt += '\n' + model.post_prompt
-        prompts_dict[idx] = _pt
+        prompts_dict[idx] = _prompt_text_for_logging(model, dataset_name, struct)
         frame_info_dict[idx] = _extract_frame_info(struct)
 
         # Print the first batch prompt for sanity check

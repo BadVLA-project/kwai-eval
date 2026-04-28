@@ -12,6 +12,7 @@ from .video_base import VideoBaseDataset
 from .utils import build_judge
 from .dream_utils import (
     convert_dream_jsonl_to_tsv,
+    parse_dream_events_response,
     resolve_dream_converted_tsv,
     resolve_dream_annotation_file,
     resolve_dream_local_dir,
@@ -262,6 +263,7 @@ class DREAM(VideoBaseDataset):
         tmp_file = get_intermediate_file_path(eval_file, f'_{model_name}_tmp', 'pkl')
         score_file = get_intermediate_file_path(eval_file, f'_{model_name}_score')
         rating_file = get_intermediate_file_path(eval_file, f'_{model_name}_rating', 'json')
+        judge_log_file = get_intermediate_file_path(eval_file, f'_{model_name}_judge_io', 'jsonl')
 
         if not osp.exists(score_file):
             gpt = build_judge(**judge_kwargs)
@@ -274,53 +276,40 @@ class DREAM(VideoBaseDataset):
             gt_map = {int(row['index']): row for _, row in self.data.iterrows()}
 
             res = {} if not osp.exists(tmp_file) else load(tmp_file)
+            if res and any('judge_io' not in record for record in res.values()):
+                print(
+                    f'Cached DREAM-1K judge tmp {tmp_file} has no judge_io records; '
+                    'rebuilding it to capture GPT input/output logs.'
+                )
+                res = {}
 
-            def extract_events(caption, model):
-                """Extract key events from video description."""
-                prompt = EXTRACTION_PROMPT.format(caption=caption)
+            def call_judge(model, stage, prompt, log):
                 response = model.generate([dict(type='text', value=prompt)])
+                log.append({
+                    'stage': stage,
+                    'prompt': prompt,
+                    'response': response,
+                })
                 return response
 
-            def evaluate_relationship(events, prediction, model):
+            def extract_events(caption, model, log, stage):
+                """Extract key events from video description."""
+                prompt = EXTRACTION_PROMPT.format(caption=caption)
+                return call_judge(model, stage, prompt, log)
+
+            def evaluate_relationship(events, prediction, model, log, stage):
                 """Evaluate relationship between events and prediction."""
                 if not events:
                     return "{\"events\": []}"
                 events_str = str(events)
                 prompt = RELATIONSHIP_PROMPT.format(prediction=prediction, events=events_str)
-                response = model.generate([dict(type='text', value=prompt)])
-                return response
-
-            def parse_json(text):
-                """Parse JSON response from GPT, handling various formats."""
-                text = text.strip()
-                if text.startswith("```json"):
-                    text = text.replace("```json", "").replace("```", "").strip()
-                elif text.startswith("```python"):
-                    text = text.replace("```python", "").replace("```", "").strip()
-
-                text = text.replace("True", "true").replace("False", "false")
-
-                try:
-                    if not text.startswith('{'):
-                        start = text.find('{')
-                        if start != -1:
-                            text = text[start:]
-                    if not text.endswith('}'):
-                        end = text.rfind('}')
-                        if end != -1:
-                            text = text[:end + 1]
-                    return json.loads(text)
-                except:
-                    import ast
-                    try:
-                        return ast.literal_eval(text)
-                    except:
-                        return None
+                return call_judge(model, stage, prompt, log)
 
             def process_sample(row, gpt_model, gt_map):
                 """Process a single sample to compute recall, precision, and F1."""
                 idx = int(row['index'])
                 prediction = row.get('prediction', '')
+                judge_io = []
 
                 if pd.isna(prediction) or prediction == '':
                     return {
@@ -341,46 +330,49 @@ class DREAM(VideoBaseDataset):
                     }
 
                 gt_row = gt_map[idx]
-                gt_response = gt_row['answer']
+                # Match the original Tarsier DREAM evaluator: judge on lower-cased
+                # descriptions to reduce casing variance in event extraction.
+                gt_response = str(gt_row['answer']).lower()
+                prediction = str(prediction).lower()
 
                 try:
                     if 'events' in gt_row and pd.notna(gt_row['events']):
                         try:
                             gt_events = json.loads(gt_row['events'])
                         except:
-                            res = extract_events(gt_response, gpt_model)
-                            parsed = parse_json(res)
-                            gt_events = parsed.get('events', []) if parsed else []
+                            res = extract_events(
+                                gt_response, gpt_model, judge_io, 'gt_event_extraction')
+                            gt_events = parse_dream_events_response(res, source='GT event extraction response')
                     else:
-                        res = extract_events(gt_response, gpt_model)
-                        parsed = parse_json(res)
-                        gt_events = parsed.get('events', []) if parsed else []
+                        res = extract_events(gt_response, gpt_model, judge_io, 'gt_event_extraction')
+                        gt_events = parse_dream_events_response(res, source='GT event extraction response')
 
-                    res_pred = extract_events(prediction, gpt_model)
-                    parsed_pred = parse_json(res_pred)
-                    pred_events = parsed_pred.get('events', []) if parsed_pred else []
+                    res_pred = extract_events(
+                        prediction, gpt_model, judge_io, 'prediction_event_extraction')
+                    pred_events = parse_dream_events_response(
+                        res_pred, source='prediction event extraction response')
 
-                    res_r = evaluate_relationship(gt_events, prediction, gpt_model)
-                    parsed_r = parse_json(res_r)
+                    res_r = evaluate_relationship(
+                        gt_events, prediction, gpt_model, judge_io, 'recall_relationship')
+                    events_r = parse_dream_events_response(res_r, source='recall relationship response')
 
                     match_r = 0
-                    if parsed_r and 'events' in parsed_r:
-                        for e in parsed_r['events']:
-                            rel = e.get('relationship', '').lower()
-                            if rel == 'entailment':
-                                match_r += 1
+                    for e in events_r:
+                        rel = e.get('relationship', '').lower() if isinstance(e, dict) else ''
+                        if rel == 'entailment':
+                            match_r += 1
 
                     score_r = match_r / len(gt_events) if gt_events else 1.0
 
-                    res_p = evaluate_relationship(pred_events, gt_response, gpt_model)
-                    parsed_p = parse_json(res_p)
+                    res_p = evaluate_relationship(
+                        pred_events, gt_response, gpt_model, judge_io, 'precision_relationship')
+                    events_p = parse_dream_events_response(res_p, source='precision relationship response')
 
                     match_p = 0
-                    if parsed_p and 'events' in parsed_p:
-                        for e in parsed_p['events']:
-                            rel = e.get('relationship', '').lower()
-                            if rel == 'entailment':
-                                match_p += 1
+                    for e in events_p:
+                        rel = e.get('relationship', '').lower() if isinstance(e, dict) else ''
+                        if rel == 'entailment':
+                            match_p += 1
 
                     score_p = match_p / len(pred_events) if pred_events else 1.0
 
@@ -390,7 +382,16 @@ class DREAM(VideoBaseDataset):
                         'index': idx,
                         'score_r': score_r,
                         'score_p': score_p,
-                        'f1': f1
+                        'f1': f1,
+                        'gt_events_count': len(gt_events),
+                        'pred_events_count': len(pred_events),
+                        'gt_response': gt_response,
+                        'prediction': prediction,
+                        'gt_events': gt_events,
+                        'pred_events': pred_events,
+                        'recall_judge_events': events_r,
+                        'precision_judge_events': events_p,
+                        'judge_io': judge_io,
                     }
                 except Exception as e:
                     return {
@@ -398,7 +399,10 @@ class DREAM(VideoBaseDataset):
                         'score_r': -1,
                         'score_p': -1,
                         'f1': -1,
-                        'error': str(e)
+                        'error': str(e),
+                        'gt_response': gt_response,
+                        'prediction': prediction,
+                        'judge_io': judge_io,
                     }
 
             data_un = data[~data['index'].isin(res)]
@@ -419,6 +423,28 @@ class DREAM(VideoBaseDataset):
                     keys=keys
                 )
                 res = load(tmp_file)
+
+            judge_logs = []
+            for idx in data['index']:
+                record = res.get(int(idx), {})
+                if not record:
+                    continue
+                judge_logs.append({
+                    'index': int(idx),
+                    'score_r': record.get('score_r', -1),
+                    'score_p': record.get('score_p', -1),
+                    'f1': record.get('f1', -1),
+                    'error': record.get('error'),
+                    'gt_response': record.get('gt_response'),
+                    'prediction': record.get('prediction'),
+                    'gt_events': record.get('gt_events'),
+                    'pred_events': record.get('pred_events'),
+                    'recall_judge_events': record.get('recall_judge_events'),
+                    'precision_judge_events': record.get('precision_judge_events'),
+                    'judge_io': record.get('judge_io', []),
+                })
+            dump(judge_logs, judge_log_file)
+            print(f"Saved DREAM-1K judge input/output log to {judge_log_file}")
 
             data['score_r'] = [res.get(int(idx), {}).get('score_r', -1) for idx in data['index']]
             data['score_p'] = [res.get(int(idx), {}).get('score_p', -1) for idx in data['index']]

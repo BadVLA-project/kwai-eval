@@ -126,6 +126,17 @@ def test_convert_dream_jsonl_to_tsv_accepts_gt_frame_dir_rows(tmp_path):
     assert row['events'] == '["One character raises their hand."]'
 
 
+def test_parse_dream_events_response_rejects_unparseable_text():
+    utils = load_dream_utils()
+
+    try:
+        utils.parse_dream_events_response('not json', source='predicted events')
+    except ValueError as err:
+        assert 'predicted events' in str(err)
+    else:
+        raise AssertionError('Expected invalid event extraction response to fail')
+
+
 def test_resolve_dream_converted_tsv_uses_cache_dir(tmp_path):
     utils = load_dream_utils()
     cache_dir = tmp_path / 'Benchmarks'

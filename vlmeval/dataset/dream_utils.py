@@ -182,6 +182,49 @@ def _serialize_events(events):
     return str(events)
 
 
+def parse_dream_judge_json(text, source='judge response'):
+    text = _clean_text(text).strip()
+    if not text:
+        raise ValueError(f'Empty {source}')
+
+    if text.startswith('```json'):
+        text = text.replace('```json', '').replace('```', '').strip()
+    elif text.startswith('```python'):
+        text = text.replace('```python', '').replace('```', '').strip()
+    text = text.replace('True', 'true').replace('False', 'false')
+
+    if not text.startswith('{'):
+        start = text.find('{')
+        if start != -1:
+            text = text[start:]
+    if not text.endswith('}'):
+        end = text.rfind('}')
+        if end != -1:
+            text = text[:end + 1]
+
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    raise ValueError(f'Failed to parse {source}: {text[:200]}')
+
+
+def parse_dream_events_response(text, source='event extraction response'):
+    parsed = parse_dream_judge_json(text, source=source)
+    events = parsed.get('events')
+    if events is None:
+        for key, value in parsed.items():
+            if str(key).lower() == 'events':
+                events = value
+                break
+    if not isinstance(events, list):
+        raise ValueError(f'Invalid {source}: missing list field `events`')
+    return events
+
+
 def normalize_dream_jsonl_row(row, row_idx=0):
     idx = row.get('index', row.get('idx', row.get('vid', row_idx)))
     video = _normalize_video_ref(_first_nonempty(
