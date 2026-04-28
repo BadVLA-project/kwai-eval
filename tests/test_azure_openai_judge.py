@@ -97,3 +97,9 @@ def test_vdc_default_judge_uses_gpt4o_when_llama_is_unavailable():
 
     assert match is not None
     assert match.group(1) == 'gpt-4o'
+
+
+def test_vllm_flag_is_not_forwarded_to_judge_kwargs():
+    run_py = (ROOT / 'run.py').read_text(encoding='utf-8')
+
+    assert "judge_kwargs['use_vllm']" not in run_py
