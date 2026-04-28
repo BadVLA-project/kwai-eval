@@ -118,6 +118,7 @@ export TIMELENS_DIR="${TIMELENS_DIR:-/m2v_intern/xuboshen/zgw/hf_cache_temp/Time
 export PERCEPTION_TEST_DIR="${PERCEPTION_TEST_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/PerceptionTest}"
 export MLVU_DIR="${MLVU_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/MLVU_Test}"
 export ETBENCH_DIR="${ETBENCH_DIR:-/m2v_intern/xuboshen/zgw/Benchmarks/ETBench}"
+export DREAM1K_DIR="${DREAM1K_DIR:-/ytech_m2v5_hdd/workspace/kling_mm/Datasets/DREAM-1K}"
 
 # ===========================================================================
 # 6. Datasets (override with DATA="ds1 ds2" env var)
@@ -136,6 +137,7 @@ else
     Video-MME_adaptive
     ETBench_adaptive
     MLVU_MCQ_adaptive
+    DREAM-1K_adaptive
     TimeLensBench_Charades_adaptive
     TimeLensBench_ActivityNet_adaptive
     TimeLensBench_QVHighlights_adaptive

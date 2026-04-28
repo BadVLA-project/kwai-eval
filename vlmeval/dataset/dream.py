@@ -10,6 +10,14 @@ from ..smp import *
 from ..smp.file import get_intermediate_file_path, get_file_extension
 from .video_base import VideoBaseDataset
 from .utils import build_judge
+from .dream_utils import (
+    convert_dream_jsonl_to_tsv,
+    resolve_dream_converted_tsv,
+    resolve_dream_annotation_file,
+    resolve_dream_local_dir,
+    resolve_dream_video_source,
+    has_mp4_files,
+)
 from ..api import OpenAIWrapper
 from ..utils import track_progress_rich
 
@@ -55,19 +63,65 @@ class DREAM(VideoBaseDataset):
     TYPE = 'DREAM-1K'
     MD5 = 'e8f0a486429bb6c27806bc0669e0d8b2'
 
-    def __init__(self, dataset='DREAM-1K', pack=False, nframe=0, fps=-1):
-        if nframe == 0 and fps == -1:
+    def __init__(self, dataset='DREAM-1K', pack=False, nframe=0, fps=-1, adaptive=False):
+        if not adaptive and nframe == 0 and fps == -1:
             nframe = 8
-        super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps, adaptive=adaptive)
+
+    @staticmethod
+    def _video_id(video):
+        video = str(video)
+        video = video.replace('\\', '/')
+        if video.startswith('video/'):
+            video = video[len('video/'):]
+        if video.lower().endswith('.mp4'):
+            video = video[:-4]
+        return video
+
+    def _resolve_video_path(self, video):
+        video_id = self._video_id(video)
+        candidates = [
+            osp.join(self.data_root, f'{video_id}.mp4'),
+            osp.join(self.data_root, f'{video_id}.MP4'),
+            osp.join(self.data_root, 'video', f'{video_id}.mp4'),
+            osp.join(self.data_root, 'video', f'{video_id}.MP4'),
+            osp.join(self.data_root, str(video)),
+        ]
+        for candidate in candidates:
+            if osp.exists(candidate):
+                return candidate
+        return candidates[0]
+
+    @staticmethod
+    def _extract_video_zip(zip_path, root):
+        print(f'Extracting {zip_path} to {root}')
+        os.makedirs(root, exist_ok=True)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            for member in zip_ref.namelist():
+                if member.endswith('/') or '__MACOSX' in member:
+                    continue
+                filename = os.path.basename(member)
+                if filename and filename.lower().endswith('.mp4'):
+                    target_path = os.path.join(root, filename)
+                    if not os.path.exists(target_path):
+                        with zip_ref.open(member) as source, open(target_path, 'wb') as target:
+                            target.write(source.read())
 
     def prepare_dataset(self, dataset):
         lmu_root = LMUDataRoot()
-        root = os.path.join(lmu_root, 'datasets', 'DREAM')
+        default_root = os.path.join(lmu_root, 'datasets', 'DREAM')
+        local_dir = resolve_dream_local_dir()
+        root, zip_path = resolve_dream_video_source(local_dir, default_root)
         os.makedirs(root, exist_ok=True)
 
-        data_file = os.path.join(lmu_root, 'DREAM-1K.tsv')
+        data_file = resolve_dream_annotation_file(lmu_root, local_dir=local_dir)
+        if data_file.endswith('.jsonl') and os.path.exists(data_file):
+            converted = resolve_dream_converted_tsv(lmu_root)
+            data_file, count = convert_dream_jsonl_to_tsv(data_file, converted)
+            print(f'Converted DREAM-1K jsonl annotation to {data_file} ({count} samples)')
 
-        if not os.path.exists(data_file) or md5(data_file) != self.MD5:
+        default_data_file = os.path.join(lmu_root, 'DREAM-1K.tsv')
+        if not os.path.exists(data_file) or (data_file == default_data_file and md5(data_file) != self.MD5):
             print(f'Downloading DREAM-1K.tsv to {data_file}')
             snapshot_download(
                 repo_id='mjuicem/DREAM-1k-VLMEvalKit',
@@ -76,9 +130,7 @@ class DREAM(VideoBaseDataset):
                 allow_patterns='DREAM-1K.tsv'
             )
 
-        videos = [f for f in os.listdir(root) if f.endswith('.mp4')]
-        if len(videos) == 0:
-            zip_path = os.path.join(root, 'video.zip')
+        if not has_mp4_files(root):
             if not os.path.exists(zip_path):
                 print(f'Downloading video.zip to {zip_path}')
                 temp_download_dir = os.path.join(lmu_root, 'temp_dream_download')
@@ -98,23 +150,37 @@ class DREAM(VideoBaseDataset):
                 else:
                     raise FileNotFoundError(f"Downloaded file not found at {downloaded_zip}")
 
-            print(f'Extracting {zip_path} to {root}')
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                for member in zip_ref.namelist():
-                    if not member.endswith('/') and '__MACOSX' not in member:
-                        filename = os.path.basename(member)
-                        if filename:
-                            target_path = os.path.join(root, filename)
-                            with zip_ref.open(member) as source, open(target_path, 'wb') as target:
-                                target.write(source.read())
+            self._extract_video_zip(zip_path, root)
         return dict(root=root, data_file=data_file)
 
     def save_video_frames(self, video):
         import decord
-        video_id = video.replace('video/', '')
+        video_id = self._video_id(video)
+        vid_path = self._resolve_video_path(video)
+
+        if self.adaptive:
+            vid = decord.VideoReader(vid_path)
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self.frame_paths_adaptive(video_id, len(indices))
+            strategy = getattr(self, '_last_adaptive_strategy', 'adaptive')
+            if np.all([osp.exists(p) for p in frame_paths]):
+                self._record_frame_info(video_id, len(frame_paths), strategy)
+                return frame_paths
+
+            lock_path = osp.join(self.frame_root, video_id + '.lock')
+            with portalocker.Lock(lock_path, 'w', timeout=30):
+                if np.all([osp.exists(p) for p in frame_paths]):
+                    self._record_frame_info(video_id, len(frame_paths), strategy)
+                    return frame_paths
+                images = [vid[i].asnumpy() for i in indices]
+                images = [Image.fromarray(arr) for arr in images]
+                for im, pth in zip(images, frame_paths):
+                    if not osp.exists(pth):
+                        im.save(pth)
+            self._record_frame_info(video_id, len(frame_paths), strategy)
+            return frame_paths
 
         if self.fps > 0:
-            vid_path = osp.join(self.data_root, video_id + '.mp4')
             vid = decord.VideoReader(vid_path)
 
             total_frames = len(vid)
@@ -149,7 +215,6 @@ class DREAM(VideoBaseDataset):
             with portalocker.Lock(lock_path, 'w', timeout=30):
                 if np.all([osp.exists(p) for p in frame_paths]):
                     return frame_paths
-                vid_path = osp.join(self.data_root, video_id + '.mp4')
                 vid = decord.VideoReader(vid_path)
                 step_size = len(vid) / (self.nframe + 1)
                 indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
@@ -164,13 +229,13 @@ class DREAM(VideoBaseDataset):
         if isinstance(line, int):
             line = self.data.iloc[line]
 
-        video_id = line['video'].replace('video/', '')
+        video_id = self._video_id(line['video'])
 
         message = []
 
         if video_llm:
-            video_path = osp.join(self.data_root, video_id + '.mp4')
-            message.append(dict(type='video', value=video_path))
+            video_path = self._resolve_video_path(line['video'])
+            message.append(self.make_video_struct(video_path, video_id=video_id))
         else:
             frames = self.save_video_frames(line['video'])
             for frame_path in frames:

@@ -388,6 +388,8 @@ adaptive_dataset = {
     ),
     # MLVU
     'MLVU_MCQ_adaptive': partial(MLVU_MCQ, dataset='MLVU_MCQ', adaptive=True),
+    # DREAM-1K
+    'DREAM-1K_adaptive': partial(DREAM, dataset='DREAM-1K', adaptive=True),
     # CharadesSTA
     'CharadesSTA_adaptive': partial(CharadesSTA, dataset='CharadesSTA', adaptive=True),
 }

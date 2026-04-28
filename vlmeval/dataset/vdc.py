@@ -4,6 +4,7 @@ from ..smp import *
 from ..smp.file import get_intermediate_file_path, get_file_extension
 from .video_base import VideoBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
+from .vdc_utils import find_vdc_data_file, find_vdc_video_root, resolve_vdc_local_path
 from ..utils import track_progress_rich
 import random
 import json
@@ -154,66 +155,80 @@ class VDC(VideoBaseDataset):
 
     def prepare_dataset(self, dataset_name='VDC', repo_id='Enxin/VLMEval-VDC'):
         def check_integrity(pth):
-            data_file = osp.join(pth, f'{dataset_name}.tsv')
-            if md5(data_file) != self.MD5:
+            data_file = find_vdc_data_file(pth, dataset_name)
+            if not osp.exists(data_file):
                 return False
+            if self.MD5 and md5(data_file) != self.MD5:
+                return False
+            video_root = find_vdc_video_root(pth)
             data = load(data_file)
             for video_pth in data['video']:
-                if not osp.exists(osp.join(pth, 'videos', video_pth)):
+                if not osp.exists(osp.join(video_root, video_pth)):
                     return False
             return True
 
+        def ensure_video_data(cache_path):
+            video_root = find_vdc_video_root(cache_path)
+            if glob(osp.join(video_root, '*')):
+                return
+
+            tar_files = glob(osp.join(cache_path, "**/*.tar*"), recursive=True)
+
+            def untar_video_data(tar_file, cache_dir):
+                import tarfile
+                with tarfile.open(tar_file, "r") as tar_ref:
+                    tar_ref.extractall(cache_dir)
+                    print(f"Extracted all files from {tar_file} to {cache_dir}")
+
+            def concat_tar_parts(tar_parts, output_tar):
+                with open(output_tar, "wb") as out_tar:
+                    from tqdm import tqdm
+                    for part in tqdm(sorted(tar_parts)):
+                        with open(part, "rb") as part_file:
+                            out_tar.write(part_file.read())
+                print(f"Concatenated parts {tar_parts} into {output_tar}")
+
+            tar_parts_dict = {}
+
+            # Group tar parts together
+            for tar_file in tar_files:
+                base_name = tar_file.split(".tar")[0]
+                if base_name not in tar_parts_dict:
+                    tar_parts_dict[base_name] = []
+                tar_parts_dict[base_name].append(tar_file)
+
+            # Concatenate and untar split parts
+            for base_name, parts in tar_parts_dict.items():
+                print(f"Extracting following tar files: {parts}")
+                output_tar = base_name + ".tar"
+                if not osp.exists(output_tar):
+                    print('Start concatenating tar files')
+
+                    concat_tar_parts(parts, output_tar)
+                    print('Finish concatenating tar files')
+
+                if not osp.exists(osp.join(cache_path, osp.basename(base_name))):
+                    untar_video_data(output_tar, cache_path)
+
+        dataset_path = None
         if os.path.exists(repo_id):
             dataset_path = repo_id
         else:
-            cache_path = get_cache_path(repo_id)
-            if cache_path is not None and check_integrity(cache_path):
-                dataset_path = cache_path
+            local_path = resolve_vdc_local_path()
+            if local_path is not None:
+                dataset_path = local_path
             else:
-                cache_path = snapshot_download(repo_id=repo_id, repo_type="dataset")
-                if not glob(osp.join(cache_path, "video")):
-                    tar_files = glob(osp.join(cache_path, "**/*.tar*"), recursive=True)
+                cache_path = get_cache_path(repo_id)
+                if cache_path is not None and check_integrity(cache_path):
+                    dataset_path = cache_path
+                else:
+                    dataset_path = snapshot_download(repo_id=repo_id, repo_type="dataset")
 
-                    def untar_video_data(tar_file, cache_dir):
-                        import tarfile
-                        with tarfile.open(tar_file, "r") as tar_ref:
-                            tar_ref.extractall(cache_dir)
-                            print(f"Extracted all files from {tar_file} to {cache_dir}")
+        ensure_video_data(dataset_path)
+        self.video_path = find_vdc_video_root(dataset_path)
+        data_file = find_vdc_data_file(dataset_path, dataset_name)
 
-                    def concat_tar_parts(tar_parts, output_tar):
-                        with open(output_tar, "wb") as out_tar:
-                            from tqdm import tqdm
-                            for part in tqdm(sorted(tar_parts)):
-                                with open(part, "rb") as part_file:
-                                    out_tar.write(part_file.read())
-                        print(f"Concatenated parts {tar_parts} into {output_tar}")
-
-                    tar_parts_dict = {}
-
-                    # Group tar parts together
-                    for tar_file in tar_files:
-                        base_name = tar_file.split(".tar")[0]
-                        if base_name not in tar_parts_dict:
-                            tar_parts_dict[base_name] = []
-                        tar_parts_dict[base_name].append(tar_file)
-
-                    # Concatenate and untar split parts
-                    for base_name, parts in tar_parts_dict.items():
-                        print(f"Extracting following tar files: {parts}")
-                        output_tar = base_name + ".tar"
-                        if not osp.exists(output_tar):
-                            print('Start concatenating tar files')
-
-                            concat_tar_parts(parts, output_tar)
-                            print('Finish concatenating tar files')
-
-                        if not osp.exists(osp.join(cache_path, osp.basename(base_name))):
-                            untar_video_data(output_tar, cache_path)
-        dataset_path = cache_path
-        self.video_path = osp.join(dataset_path, 'videos/')
-        data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
-
-        return dict(data_file=data_file, root=osp.join(dataset_path, 'video'))
+        return dict(data_file=data_file, root=self.video_path)
 
     def build_prompt_pack(self, line):
         if isinstance(line, int):

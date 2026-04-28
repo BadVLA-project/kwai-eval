@@ -1,6 +1,11 @@
 from ..smp import *
 import os
 import sys
+from .azure_openai_utils import (
+    build_chat_completion_payload,
+    resolve_azure_openai_config,
+    resolve_azure_openai_key,
+)
 from .base import BaseAPI
 
 APIBASES = {
@@ -43,17 +48,28 @@ class OpenAIWrapper(BaseAPI):
                  timeout: int = 300,
                  api_base: str = None,
                  max_tokens: int = 2048,
+                 max_completion_tokens: int = None,
                  img_size: int = -1,
                  img_detail: str = 'low',
                  use_azure: bool = False,
+                 use_azure_sdk: bool = False,
+                 azure_endpoint: str = None,
+                 azure_deployment_name: str = None,
+                 api_version: str = None,
                  **kwargs):
 
         self.model = model
         self.cur_idx = 0
         self.fail_msg = 'Failed to obtain answer via API. '
         self.max_tokens = max_tokens
+        self.max_completion_tokens = max_completion_tokens
         self.temperature = temperature
-        self.use_azure = use_azure
+        self.use_azure = use_azure or use_azure_sdk
+        self.use_azure_sdk = use_azure_sdk
+        self.azure_endpoint = None
+        self.azure_deployment_name = None
+        self.azure_api_version = None
+        self._azure_client = None
 
         if 'step' in model:
             env_key = os.environ.get('STEPAI_API_KEY', '')
@@ -92,14 +108,11 @@ class OpenAIWrapper(BaseAPI):
             api_base = 'https://qianfan.baidubce.com/v2/chat/completions'
             self.baidu_appid = os.environ.get('BAIDU_APP_ID', None)
         else:
-            if use_azure:
-                env_key = os.environ.get('AZURE_OPENAI_API_KEY', None)
-                assert env_key is not None, 'Please set the environment variable AZURE_OPENAI_API_KEY. '
-
+            if self.use_azure:
                 if key is None:
-                    key = env_key
+                    key = resolve_azure_openai_key()
                 assert isinstance(key, str), (
-                    'Please set the environment variable AZURE_OPENAI_API_KEY to your openai key. '
+                    'Please set AZURE_OPENAI_API_KEY or AZURE_API_KEY to your Azure OpenAI key. '
                 )
             else:
                 env_key = os.environ.get('OPENAI_API_KEY', '')
@@ -116,21 +129,23 @@ class OpenAIWrapper(BaseAPI):
         self.is_o_model = ('o1' in model) or ('o3' in model) or ('o4' in model)
         super().__init__(retry=retry, system_prompt=system_prompt, verbose=verbose, **kwargs)
 
-        if use_azure:
+        if self.use_azure:
             api_base_template = (
                 '{endpoint}openai/deployments/{deployment_name}/chat/completions?api-version={api_version}'
             )
-            endpoint = os.getenv('AZURE_OPENAI_ENDPOINT', None)
-            assert endpoint is not None, 'Please set the environment variable AZURE_OPENAI_ENDPOINT. '
-            deployment_name = os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME', None)
-            assert deployment_name is not None, 'Please set the environment variable AZURE_OPENAI_DEPLOYMENT_NAME. '
-            api_version = os.getenv('OPENAI_API_VERSION', None)
-            assert api_version is not None, 'Please set the environment variable OPENAI_API_VERSION. '
+            azure_config = resolve_azure_openai_config(
+                azure_endpoint=azure_endpoint,
+                azure_deployment_name=azure_deployment_name,
+                api_version=api_version,
+            )
+            self.azure_endpoint = azure_config.endpoint
+            self.azure_deployment_name = azure_config.deployment_name
+            self.azure_api_version = azure_config.api_version
 
             self.api_base = api_base_template.format(
-                endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
-                deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
-                api_version=os.getenv('OPENAI_API_VERSION')
+                endpoint=f'{self.azure_endpoint}/',
+                deployment_name=self.azure_deployment_name,
+                api_version=self.azure_api_version
             )
         else:
             if api_base is None:
@@ -154,6 +169,22 @@ class OpenAIWrapper(BaseAPI):
                 self.key = os.environ.get('BOYUE_API_KEY')
 
         self.logger.info(f'Using API Base: {self.api_base}; API Key: {self.key}')
+
+    def _get_azure_client(self):
+        if self._azure_client is None:
+            try:
+                from openai import AzureOpenAI
+            except ImportError as err:
+                raise ImportError(
+                    'AzureOpenAI SDK is required when use_azure_sdk=True. '
+                    'Install the openai package in the eval environment.'
+                ) from err
+            self._azure_client = AzureOpenAI(
+                azure_endpoint=self.azure_endpoint,
+                api_key=self.key,
+                api_version=self.azure_api_version,
+            )
+        return self._azure_client
 
     # inputs can be a lvl-2 nested list: [content1, content2, content3, ...]
     # content can be a string or a list of image & text
@@ -195,6 +226,27 @@ class OpenAIWrapper(BaseAPI):
         input_msgs = self.prepare_inputs(inputs)
         temperature = kwargs.pop('temperature', self.temperature)
         max_tokens = kwargs.pop('max_tokens', self.max_tokens)
+        max_completion_tokens = kwargs.pop('max_completion_tokens', self.max_completion_tokens)
+
+        if self.use_azure_sdk:
+            payload = build_chat_completion_payload(
+                deployment_name=self.azure_deployment_name,
+                messages=input_msgs,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
+                use_max_completion_tokens=self.is_max_completion_tokens,
+                extra_kwargs=kwargs,
+            )
+
+            try:
+                response = self._get_azure_client().chat.completions.create(**payload)
+                answer = response.choices[0].message.content.strip()
+                return 0, answer, response
+            except Exception as err:
+                if self.verbose:
+                    self.logger.error(f'{type(err)}: {err}')
+                return -1, self.fail_msg, repr(err)
 
         # Will send request if use Azure, dk how to use openai client for it
         if self.use_azure:
@@ -206,18 +258,16 @@ class OpenAIWrapper(BaseAPI):
         if hasattr(self, 'baidu_appid'):
             headers['appid'] = self.baidu_appid
 
-        payload = dict(
-            model=self.model,
+        payload = build_chat_completion_payload(
+            deployment_name=self.model,
             messages=input_msgs,
-            n=1,
             temperature=temperature,
-            **kwargs)
-
-        if self.is_max_completion_tokens:
-            payload['max_completion_tokens'] = max_tokens
-            payload.pop('temperature')
-        else:
-            payload['max_tokens'] = max_tokens
+            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
+            use_max_completion_tokens=self.is_max_completion_tokens,
+            extra_kwargs=kwargs,
+            include_stream=False,
+        )
 
         if 'gemini' in self.model:
             payload.pop('max_tokens')
