@@ -4,6 +4,7 @@ from ..smp import *
 from ..smp.file import get_intermediate_file_path, get_file_extension
 from .video_base import VideoBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
+from .vdc_logging import build_vdc_judge_io_logs
 from .vdc_utils import find_vdc_data_file, find_vdc_video_root, resolve_vdc_local_path
 from ..utils import track_progress_rich
 import random
@@ -372,37 +373,67 @@ class VDC(VideoBaseDataset):
         tmp_file = get_intermediate_file_path(eval_file, f'_{judge}_tmp', 'pkl')
         tgt_file = get_intermediate_file_path(eval_file, f'_{judge}_rating', 'json')
         score_file = get_intermediate_file_path(eval_file, f'_{judge}_score')
+        judge_log_file = get_intermediate_file_path(eval_file, f'_{judge}_judge_io', 'jsonl')
 
         model = build_judge(**judge_kwargs)
+
+        def expand_vdc_questions(data):
+            expanded_data = []
+            for idx, row in data.iterrows():
+                try:
+                    questions = ast.literal_eval(row['question']) if isinstance(row['question'], str) else row['question']
+                    for q_idx, q_dict in enumerate(questions):
+                        new_row = row.copy()
+                        new_row['question'] = q_dict['question']
+                        new_row['answer'] = q_dict['answer']
+                        new_row['question_id'] = q_idx
+                        new_row['judge_key'] = f"{row['index']}::{q_idx}"
+                        expanded_data.append(new_row)
+                except Exception as e:
+                    print(f"Error parsing questions for row {idx}")
+                    print(f"Error message: {str(e)}")
+                    continue
+            return pd.DataFrame(expanded_data).reset_index(drop=True)
+
+        def dump_judge_io_log(expanded_df, pred_map, score_map):
+            scored_df = expanded_df[expanded_df['judge_key'].isin(score_map)].copy()
+            scored_df = scored_df[~pd.isna(scored_df['prediction'])]
+            if not len(scored_df):
+                dump([], judge_log_file)
+                print(f"Saved VDC judge input/output log to {judge_log_file}")
+                return
+
+            indices = [scored_df.iloc[i]['judge_key'] for i in range(len(scored_df))]
+            scored_df['pred_response'] = [pred_map.get(idx, FAIL_MSG) for idx in indices]
+            response_prompts = [prepare_response_prompt(scored_df.iloc[i]) for i in range(len(scored_df))]
+            score_prompts = [prepare_score_prompt(scored_df.iloc[i]) for i in range(len(scored_df))]
+            judge_logs = build_vdc_judge_io_logs(
+                scored_df,
+                indices,
+                response_prompts,
+                score_prompts,
+                pred_map,
+                score_map,
+                response_system_prompt=SYSTEM_GENER_PRED_PROMPT,
+                score_system_prompt=SYSTEM_CAL_SCORE_PROMPT,
+                judge=judge,
+            )
+            dump(judge_logs, judge_log_file)
+            print(f"Saved VDC judge input/output log to {judge_log_file}")
 
         if not osp.exists(score_file):
             res = {} if not osp.exists(tmp_file) else load(tmp_file)
             res = {k: v for k, v in res.items() if FAIL_MSG not in v}
 
             data = load(eval_file)
+            expanded_df = expand_vdc_questions(data)
 
-            expanded_data = []
-            for idx, row in data.iterrows():
-                try:
-                    questions = ast.literal_eval(row['question']) if isinstance(row['question'], str) else row['question']
-                    for q_dict in questions:
-                        new_row = row.copy()
-                        new_row['question'] = q_dict['question']
-                        new_row['answer'] = q_dict['answer']
-                        expanded_data.append(new_row)
-                except Exception as e:
-                    print(f"Error parsing questions for row {idx}")
-                    print(f"Error message: {str(e)}")
-                    continue
-
-            expanded_df = pd.DataFrame(expanded_data).reset_index(drop=True)
-
-            data_un = expanded_df[~expanded_df['index'].isin(res)]
+            data_un = expanded_df[~expanded_df['judge_key'].isin(res)]
             data_un = data_un[~pd.isna(data_un['prediction'])]
             lt = len(data_un)
 
             response_prompts = [prepare_response_prompt(data_un.iloc[i]) for i in range(lt)]
-            indices = [data_un.iloc[i]['index'] for i in range(lt)]
+            indices = [data_un.iloc[i]['judge_key'] for i in range(lt)]
 
             model.system_prompt = SYSTEM_GENER_PRED_PROMPT
             if len(response_prompts):
@@ -431,9 +462,18 @@ class VDC(VideoBaseDataset):
                 )
 
             score_map = load(tmp_file)
-            data['score'] = [score_map[idx] for idx in data['index']]
+            dump_judge_io_log(expanded_df, pred_map, score_map)
+            scored_df = expanded_df[expanded_df['judge_key'].isin(score_map)].copy()
+            scored_df = scored_df[~pd.isna(scored_df['prediction'])]
+            scored_indices = [scored_df.iloc[i]['judge_key'] for i in range(len(scored_df))]
+            scored_df['pred_response'] = [pred_map.get(idx, FAIL_MSG) for idx in scored_indices]
+            scored_df['score'] = [score_map[idx] for idx in scored_indices]
 
-            dump(data, score_file)
+            dump(scored_df, score_file)
+        elif not osp.exists(judge_log_file) and osp.exists(response_file) and osp.exists(tmp_file):
+            data = load(eval_file)
+            expanded_df = expand_vdc_questions(data)
+            dump_judge_io_log(expanded_df, load(response_file), load(tmp_file))
 
         rating = get_dimension_rating(score_file)
         dump(rating, tgt_file)
