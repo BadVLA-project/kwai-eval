@@ -104,6 +104,28 @@ def test_convert_dream_jsonl_to_tsv_accepts_official_metadata_rows(tmp_path):
     assert row['events'] == '["A person picks up a cup."]'
 
 
+def test_convert_dream_jsonl_to_tsv_accepts_gt_frame_dir_rows(tmp_path):
+    utils = load_dream_utils()
+    jsonl = tmp_path / 'dream1k_bench.jsonl'
+    jsonl.write_text(
+        '{"video_frame_dir": "/pfs/Datasets/DREAM-1K/frames/2.mp4", '
+        '"GT_description": "One character raises their hand.", '
+        '"GT_events": ["One character raises their hand."], '
+        '"index": 1}\n',
+        encoding='utf-8',
+    )
+    tsv = tmp_path / 'dream1k_bench.vlmeval.tsv'
+
+    utils.convert_dream_jsonl_to_tsv(str(jsonl), str(tsv))
+
+    with tsv.open(encoding='utf-8') as f:
+        row = next(csv.DictReader(f, delimiter='\t'))
+    assert row['index'] == '1'
+    assert row['video'] == 'video/2.mp4'
+    assert row['answer'] == 'One character raises their hand.'
+    assert row['events'] == '["One character raises their hand."]'
+
+
 def test_resolve_dream_converted_tsv_uses_cache_dir(tmp_path):
     utils = load_dream_utils()
     cache_dir = tmp_path / 'Benchmarks'
