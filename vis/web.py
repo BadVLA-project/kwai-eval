@@ -9,6 +9,7 @@ import socketserver
 import numpy as np
 
 from .data_loader import ResultLoader
+from .subclass_radar import build_subclass_radar_payload
 
 
 def _sanitize(obj):
@@ -64,6 +65,7 @@ def export_data(loader: ResultLoader, include_overlap: bool = False) -> dict:
         'scores': scores,
         'configs': configs,
         'breakdowns': breakdowns,
+        'subclass_radar': build_subclass_radar_payload(loader),
     }
     if include_overlap:
         payload['overlap'] = loader.load_overlap_analysis(max_case_matrix=0)
@@ -146,6 +148,23 @@ table.config-table td.diff { background:#fff3cd; }
 .chart-type-btn { padding:4px 12px; border:1px solid #ccc; border-radius:4px; cursor:pointer; font-size:12px; background:#f9f9f9; }
 .chart-type-btn.active { background:#3498db; color:#fff; border-color:#3498db; }
 
+/* ── Subclass Radar tab ── */
+.subclass-layout { display:flex; gap:16px; min-height:calc(100vh - 120px); }
+.subclass-sidebar { width:280px; flex-shrink:0; background:#fff; border-radius:8px; padding:12px; overflow-y:auto; max-height:calc(100vh - 120px); box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+.subclass-main { flex:1; display:flex; flex-direction:column; gap:16px; min-width:0; }
+.subclass-panel { background:#fff; border-radius:8px; padding:12px; box-shadow:0 1px 3px rgba(0,0,0,0.1); min-width:0; }
+.subclass-panel h3 { font-size:13px; font-weight:600; margin-bottom:10px; color:#475569; }
+.subclass-chart { width:100%; min-height:560px; }
+.subclass-note { color:#64748b; font-size:12px; margin-top:6px; line-height:1.4; }
+table.subclass-table { width:100%; border-collapse:collapse; font-size:12px; }
+table.subclass-table th, table.subclass-table td { padding:6px 8px; border:1px solid #e2e8f0; text-align:right; white-space:nowrap; }
+table.subclass-table th { background:#f1f5f9; color:#334155; font-weight:600; position:sticky; top:0; z-index:1; }
+table.subclass-table td.left, table.subclass-table th.left { text-align:left; }
+@media (max-width: 980px) {
+  .subclass-layout { flex-direction:column; }
+  .subclass-sidebar { width:100%; max-height:none; }
+}
+
 /* ── Overlap tab ── */
 .overlap-layout { display:flex; gap:16px; min-height:calc(100vh - 120px); }
 .overlap-sidebar { width:260px; flex-shrink:0; background:#fff; border-radius:8px; padding:12px; overflow-y:auto; max-height:calc(100vh - 120px); box-shadow:0 1px 3px rgba(0,0,0,0.1); }
@@ -178,6 +197,7 @@ table.overlap-table td.left, table.overlap-table th.left { text-align:left; }
     <div class="tab active" onclick="switchTab('table')">Score Table</div>
     <div class="tab" onclick="switchTab('config')">Model Config</div>
     <div class="tab" onclick="switchTab('charts')">Charts</div>
+    <div class="tab subclass-tab" style="display:none" onclick="switchTab('subclass')">Subclass Radar</div>
     <div class="tab overlap-tab" style="display:none" onclick="switchTab('overlap')">Overlap</div>
   </div>
 </div>
@@ -233,6 +253,32 @@ table.overlap-table td.left, table.overlap-table th.left { text-align:left; }
     </div>
   </div>
 
+  <div id="tab-subclass" style="display:none">
+    <div class="subclass-layout">
+      <div class="subclass-sidebar">
+        <div class="sidebar-section">
+          <h3>Benchmark</h3>
+          <select id="subclass-bench" class="select-control" onchange="setSubclassBench(this.value)"></select>
+          <p class="subclass-note" id="subclass-note"></p>
+        </div>
+        <div class="sidebar-section">
+          <h3>Models <span class="btn-group"><button onclick="toggleAllSubclassModels(true)">All</button><button onclick="toggleAllSubclassModels(false)">None</button></span></h3>
+          <div class="check-list" id="subclass-model-checks"></div>
+        </div>
+      </div>
+      <div class="subclass-main">
+        <div class="subclass-panel">
+          <h3 id="subclass-title">Subclass Radar</h3>
+          <div class="subclass-chart" id="subclass-radar-chart"></div>
+        </div>
+        <div class="subclass-panel">
+          <h3>Scores</h3>
+          <div class="table-wrap compact" id="subclass-score-table"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="tab-overlap" style="display:none">
     <div class="overlap-layout">
       <div class="overlap-sidebar">
@@ -283,6 +329,7 @@ const columnById = Object.fromEntries(tableColumns.map(col => [col.id, col]));
 const scores = DATA.scores || {};
 const configs = DATA.configs || {};
 const breakdowns = DATA.breakdowns || {};
+const subclassRadar = DATA.subclass_radar || null;
 const overlap = DATA.overlap || null;
 
 let activeTab = 'table';
@@ -291,12 +338,15 @@ let selectedModels = new Set(models.map(m => m.key));
 let selectedBench = new Set(tableColumns.map(col => col.id));
 let selectedConfigModels = new Set(models.slice(0, Math.min(4, models.length)).map(m => m.key));
 let chartInstance = null;
+let subclassChart = null;
 let overlapDatasetChart = null;
 let overlapGroupChart = null;
 let sortCol = null;
 let sortAsc = true;
 let expandedCell = null;
 let selectedTableModels = new Set(models.map(m => m.key));
+let selectedSubclassModels = new Set(models.map(m => m.key));
+let selectedSubclassBench = null;
 let overlapBaseline = overlap?.baseline || models[0]?.key || '';
 let overlapCandidate = (overlap?.models || []).find(m => m !== overlapBaseline) || overlap?.models?.[0] || '';
 let overlapDataset = '__all__';
@@ -305,11 +355,12 @@ function switchTab(tab) {
   activeTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
-  ['table', 'config', 'charts', 'overlap'].forEach(t => {
+  ['table', 'config', 'charts', 'subclass', 'overlap'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === tab ? '' : 'none';
   });
   if (tab === 'charts') updateChart();
   if (tab === 'config') renderConfigTable();
+  if (tab === 'subclass') renderSubclassRadar();
   if (tab === 'overlap') renderOverlap();
 }
 
@@ -488,6 +539,15 @@ function esc(s) {
   return s.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
+function html(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function initTableSidebar() {
   let h = '';
   models.forEach(m => {
@@ -653,6 +713,22 @@ function updateChart() {
   else renderBar(selModels, selCols);
 }
 
+const RADAR_COLORS = [
+  '#1d4ed8', '#dc2626', '#0f766e', '#a16207',
+  '#7c3aed', '#be123c', '#0891b2', '#166534',
+];
+const RADAR_SYMBOLS = ['circle', 'diamond', 'triangle', 'rect', 'pin', 'arrow', 'roundRect'];
+const RADAR_LINE_TYPES = ['solid', 'dashed', 'dotted'];
+
+function radarStyle(idx) {
+  return {
+    color: RADAR_COLORS[idx % RADAR_COLORS.length],
+    symbol: RADAR_SYMBOLS[idx % RADAR_SYMBOLS.length],
+    lineType: RADAR_LINE_TYPES[idx % RADAR_LINE_TYPES.length],
+    fillOpacity: idx === 0 ? 0.04 : 0.06,
+  };
+}
+
 function renderRadar(selModels, selCols) {
   const indicators = selCols.map(col => {
     const vals = selModels.map(m => scores[m.key]?.[col.id]).filter(v => v != null);
@@ -668,17 +744,55 @@ function renderRadar(selModels, selCols) {
 
   chartInstance.setOption({
     tooltip: { trigger: 'item' },
-    legend: { data: selModels.map(m => m.key), bottom: 0, type: 'scroll', textStyle: { fontSize: 11 } },
-    radar: { indicator: indicators, radius: '60%', nameGap: 8, axisName: { fontSize: 11 } },
+    color: selModels.map((_, idx) => radarStyle(idx).color),
+    legend: {
+      data: selModels.map(m => m.key),
+      bottom: 0,
+      type: 'scroll',
+      itemWidth: 18,
+      itemHeight: 12,
+      textStyle: { fontSize: 11, color: '#334155' },
+    },
+    radar: {
+      indicator: indicators,
+      radius: '60%',
+      nameGap: 8,
+      axisName: { fontSize: 11, color: '#475569', fontWeight: 600 },
+      axisLine: { lineStyle: { color: '#94a3b8' } },
+      splitLine: { lineStyle: { color: '#cbd5e1', width: 1.2 } },
+      splitArea: { areaStyle: { color: ['rgba(255,255,255,0.92)', 'rgba(241,245,249,0.72)'] } },
+    },
     series: [{
       type: 'radar',
-      data: selModels.map(m => ({
-        name: m.key,
-        value: selCols.map(col => scores[m.key]?.[col.id] ?? null),
-        lineStyle: { width: 2 },
-        areaStyle: { opacity: 0.1 },
-        itemStyle: { color: m.color },
-      })),
+      symbolSize: 8,
+      data: selModels.map((m, idx) => {
+        const style = radarStyle(idx);
+        return {
+          name: m.key,
+          value: selCols.map(col => scores[m.key]?.[col.id] ?? null),
+          symbol: style.symbol,
+          lineStyle: {
+            width: 3.2,
+            type: style.lineType,
+            color: style.color,
+            shadowBlur: 2,
+            shadowColor: 'rgba(15, 23, 42, 0.18)',
+          },
+          areaStyle: {
+            color: style.color,
+            opacity: style.fillOpacity,
+          },
+          itemStyle: {
+            color: style.color,
+            borderColor: '#ffffff',
+            borderWidth: 1.5,
+          },
+          emphasis: {
+            lineStyle: { width: 4.2 },
+            areaStyle: { opacity: 0.12 },
+          },
+        };
+      }),
     }],
   });
 }
@@ -701,6 +815,226 @@ function renderBar(selModels, selCols) {
       itemStyle: { color: m.color },
     })),
   });
+}
+
+function subclassBenchEntries() {
+  if (!subclassRadar || !subclassRadar.by_bench) return [];
+  return (subclassRadar.benchmarks || Object.keys(subclassRadar.by_bench))
+    .map(bench => ({ bench, report: subclassRadar.by_bench[bench] }))
+    .filter(item => item.report);
+}
+
+function subclassModelInfo(key) {
+  return models.find(m => m.key === key) || { key, color: '#64748b' };
+}
+
+function hasSubclassScores(report, modelKey) {
+  const dims = report?.dimensions || [];
+  const scoresForModel = report?.scores?.[modelKey] || {};
+  return dims.some(dim => scoresForModel[dim] != null);
+}
+
+function initSubclassControls() {
+  const tab = document.querySelector('.subclass-tab');
+  const entries = subclassBenchEntries();
+  if (!subclassRadar || !entries.length) {
+    if (tab) tab.style.display = 'none';
+    return;
+  }
+  if (tab) tab.style.display = '';
+
+  const preferred = entries.find(item => !item.report.skipped) || entries[0];
+  if (!selectedSubclassBench || !subclassRadar.by_bench[selectedSubclassBench]) {
+    selectedSubclassBench = preferred.bench;
+  }
+
+  const options = entries.map(item => {
+    const suffix = item.report.skipped ? ' (no subclass)' : '';
+    return `<option value="${esc(item.bench)}">${html(item.bench + suffix)}</option>`;
+  }).join('');
+  const benchSelect = document.getElementById('subclass-bench');
+  benchSelect.innerHTML = options;
+  benchSelect.value = selectedSubclassBench;
+  renderSubclassModelChecks();
+}
+
+function renderSubclassModelChecks() {
+  const report = subclassRadar?.by_bench?.[selectedSubclassBench];
+  const modelKeys = report?.models?.length ? report.models : models.map(m => m.key);
+  let h = '';
+  modelKeys.forEach(key => {
+    const model = subclassModelInfo(key);
+    const available = hasSubclassScores(report, key);
+    const checked = available && selectedSubclassModels.has(key) ? 'checked' : '';
+    const disabled = available ? '' : 'disabled';
+    const muted = available ? '' : 'style="opacity:0.45"';
+    h += `<label class="check-item" ${muted}>
+      <input type="checkbox" ${checked} ${disabled} onchange="toggleSubclassModel('${esc(key)}')" data-group="subclassmodel" data-key="${esc(key)}">
+      <span class="dot" style="background:${model.color}"></span>
+      <span>${html(key)}</span>
+    </label>`;
+  });
+  document.getElementById('subclass-model-checks').innerHTML = h || '<div class="empty-state">No models</div>';
+}
+
+function setSubclassBench(value) {
+  selectedSubclassBench = value;
+  renderSubclassModelChecks();
+  renderSubclassRadar();
+}
+
+function toggleSubclassModel(key) {
+  if (selectedSubclassModels.has(key)) selectedSubclassModels.delete(key);
+  else selectedSubclassModels.add(key);
+  renderSubclassRadar();
+}
+
+function toggleAllSubclassModels(state) {
+  document.querySelectorAll('input[data-group="subclassmodel"]').forEach(cb => {
+    if (cb.disabled) return;
+    cb.checked = state;
+    const key = cb.dataset.key;
+    state ? selectedSubclassModels.add(key) : selectedSubclassModels.delete(key);
+  });
+  renderSubclassRadar();
+}
+
+function shortLabel(value, limit = 28) {
+  const text = String(value ?? '');
+  return text.length <= limit ? text : text.slice(0, limit - 3) + '...';
+}
+
+function renderSubclassRadar() {
+  if (!subclassRadar) {
+    document.getElementById('tab-subclass').innerHTML = '<div class="empty-state">No subclass radar data</div>';
+    return;
+  }
+  if (!selectedSubclassBench) initSubclassControls();
+
+  const report = subclassRadar.by_bench?.[selectedSubclassBench];
+  const title = document.getElementById('subclass-title');
+  const note = document.getElementById('subclass-note');
+  const el = document.getElementById('subclass-radar-chart');
+  if (!subclassChart) subclassChart = echarts.init(el);
+  subclassChart.clear();
+
+  if (!report || report.skipped || (report.dimensions || []).length < 2) {
+    const reason = report?.reason || 'no subclass breakdown found';
+    title.textContent = `${selectedSubclassBench || 'Benchmark'} Subclass Radar`;
+    note.textContent = reason;
+    subclassChart.setOption({
+      title: { text: 'No subclass breakdown', left: 'center', top: 'center', textStyle: { color: '#94a3b8', fontSize: 13 } },
+    });
+    document.getElementById('subclass-score-table').innerHTML = '<div class="empty-state">No subclass score table</div>';
+    return;
+  }
+
+  const dimensions = report.dimensions || [];
+  const modelKeys = report.models?.length ? report.models : models.map(m => m.key);
+  const selected = modelKeys
+    .filter(key => selectedSubclassModels.has(key))
+    .filter(key => hasSubclassScores(report, key))
+    .map(subclassModelInfo);
+
+  title.textContent = `${report.bench} Subclass Radar`;
+  const sources = (report.source_benchmarks || []).join(', ') || report.bench;
+  note.innerHTML = `Dimension: <strong>${html(report.dimension || 'subclass')}</strong><br>Source: ${html(sources)}`;
+
+  if (!selected.length) {
+    subclassChart.setOption({
+      title: { text: 'Select models', left: 'center', top: 'center', textStyle: { color: '#94a3b8', fontSize: 13 } },
+    });
+    renderSubclassScoreTable(report, selected, dimensions);
+    return;
+  }
+
+  const numericValues = [];
+  selected.forEach(model => {
+    const row = report.scores?.[model.key] || {};
+    dimensions.forEach(dim => {
+      if (row[dim] != null) numericValues.push(Number(row[dim]));
+    });
+  });
+  const maxScore = Math.max(100, ...numericValues.filter(v => Number.isFinite(v)));
+
+  subclassChart.setOption({
+    tooltip: { trigger: 'item' },
+    color: selected.map(model => model.color),
+    legend: {
+      data: selected.map(model => model.key),
+      bottom: 0,
+      type: 'scroll',
+      itemWidth: 18,
+      itemHeight: 12,
+      textStyle: { fontSize: 11, color: '#334155' },
+    },
+    radar: {
+      indicator: dimensions.map(dim => ({ name: dim, min: 0, max: Math.ceil(maxScore / 5) * 5 })),
+      radius: dimensions.length > 12 ? '54%' : '62%',
+      center: ['50%', '47%'],
+      nameGap: 8,
+      axisName: {
+        color: '#475569',
+        fontSize: 10,
+        formatter: value => shortLabel(value, dimensions.length > 12 ? 18 : 28),
+      },
+      axisLine: { lineStyle: { color: '#94a3b8' } },
+      splitLine: { lineStyle: { color: '#cbd5e1', width: 1 } },
+      splitArea: { areaStyle: { color: ['rgba(255,255,255,0.95)', 'rgba(241,245,249,0.7)'] } },
+    },
+    series: [{
+      type: 'radar',
+      symbolSize: 7,
+      data: selected.map((model, idx) => {
+        const style = radarStyle(idx);
+        const row = report.scores?.[model.key] || {};
+        return {
+          name: model.key,
+          value: dimensions.map(dim => row[dim] ?? null),
+          symbol: style.symbol,
+          lineStyle: { width: 2.6, type: style.lineType, color: model.color },
+          areaStyle: { color: model.color, opacity: 0.05 },
+          itemStyle: { color: model.color, borderColor: '#ffffff', borderWidth: 1.2 },
+          emphasis: { lineStyle: { width: 3.6 }, areaStyle: { opacity: 0.12 } },
+        };
+      }),
+    }],
+  });
+  renderSubclassScoreTable(report, selected, dimensions);
+}
+
+function renderSubclassScoreTable(report, selectedModels, dimensions) {
+  if (!selectedModels.length) {
+    document.getElementById('subclass-score-table').innerHTML = '<div class="empty-state">Select models to show scores</div>';
+    return;
+  }
+
+  let h = '<table class="subclass-table"><thead><tr><th class="left">Subclass</th>';
+  selectedModels.forEach(model => {
+    h += `<th><span class="dot" style="background:${model.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${html(model.key)}</th>`;
+  });
+  h += '<th>Best</th></tr></thead><tbody>';
+
+  dimensions.forEach(dim => {
+    const values = selectedModels
+      .map(model => report.scores?.[model.key]?.[dim])
+      .filter(value => value != null)
+      .map(Number);
+    const best = values.length ? Math.max(...values) : null;
+    h += '<tr>';
+    h += `<td class="left">${html(dim)}</td>`;
+    selectedModels.forEach(model => {
+      const value = report.scores?.[model.key]?.[dim];
+      const isBest = value != null && Number(value) === best && selectedModels.length > 1;
+      const style = isBest ? 'font-weight:700;color:#15803d' : '';
+      h += `<td style="${style}">${fmtNum(value)}</td>`;
+    });
+    h += `<td>${fmtNum(best)}</td>`;
+    h += '</tr>';
+  });
+
+  h += '</tbody></table>';
+  document.getElementById('subclass-score-table').innerHTML = h;
 }
 
 function fmtNum(value, digits = 2) {
@@ -910,12 +1244,14 @@ function renderOverlapGroupTable() {
 
 window.addEventListener('resize', () => {
   if (chartInstance) chartInstance.resize();
+  if (subclassChart) subclassChart.resize();
   if (overlapDatasetChart) overlapDatasetChart.resize();
   if (overlapGroupChart) overlapGroupChart.resize();
 });
 initTableSidebar();
 initSidebar();
 initConfigSidebar();
+initSubclassControls();
 initOverlapControls();
 renderTable();
 </script>

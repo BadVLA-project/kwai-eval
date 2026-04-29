@@ -8,6 +8,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vis.subclass_radar import build_subclass_radar_report
+from vis.data_loader import ResultLoader
+from vis.web import export_data
 
 
 def _model_dir(root, model):
@@ -111,3 +113,13 @@ def test_build_subclass_radar_report_cli(tmp_path):
     assert result.returncode == 0, result.stderr
     assert (out_dir / "summary.json").is_file()
     assert (out_dir / "by_bench" / "MVBench" / "radar.png").is_file()
+
+
+def test_dashboard_export_includes_subclass_radar_payload(tmp_path):
+    _write_four_bench_fixture(tmp_path)
+
+    payload = export_data(ResultLoader(str(tmp_path)))
+
+    assert "subclass_radar" in payload
+    assert payload["subclass_radar"]["by_bench"]["MVBench"]["skipped"] is False
+    assert payload["subclass_radar"]["by_bench"]["VideoMME"]["dimension"] == "overall/task_type"

@@ -349,3 +349,32 @@ def build_subclass_radar_report(
     _write_json(report, osp.join(out_dir, "summary.json"))
     _write_index(report, out_dir)
     return json.loads(json.dumps(report, default=_json_safe))
+
+
+def build_subclass_radar_payload(
+    loader: ResultLoader,
+    benchmarks: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build dashboard-ready subclass radar data without writing files."""
+    requested = benchmarks or DEFAULT_BENCHMARKS
+    report: dict[str, Any] = {
+        "benchmarks": [],
+        "models": loader.models,
+        "by_bench": {},
+    }
+    for bench in requested:
+        bench_report = _collect_family(loader, bench)
+        if bench_report is None:
+            bench_report = {
+                "bench": bench,
+                "source_benchmarks": [],
+                "dimension": "",
+                "models": loader.models,
+                "dimensions": [],
+                "scores": {model: {} for model in loader.models},
+                "skipped": True,
+                "reason": "benchmark not found",
+            }
+        report["benchmarks"].append(bench)
+        report["by_bench"][bench] = bench_report
+    return json.loads(json.dumps(report, default=_json_safe))
