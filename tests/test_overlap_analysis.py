@@ -161,7 +161,7 @@ def test_build_overlap_report_cli_writes_bundle(tmp_path):
     assert (out_dir / "case_matrix.jsonl").is_file()
 
 
-def test_dashboard_export_includes_overlap_summary(tmp_path):
+def test_dashboard_export_skips_overlap_by_default(tmp_path):
     _write_score(
         tmp_path,
         "base",
@@ -183,11 +183,31 @@ def test_dashboard_export_includes_overlap_summary(tmp_path):
 
     payload = export_data(ResultLoader(str(tmp_path)))
 
+    assert "overlap" not in payload
+
+
+def test_dashboard_export_can_include_overlap_when_requested(tmp_path):
+    _write_score(
+        tmp_path,
+        "base",
+        "MiniBench",
+        [
+            {"index": 1, "question": "q1", "answer": "A", "prediction": "A", "correct": 1, "category": "motion"},
+            {"index": 2, "question": "q2", "answer": "B", "prediction": "C", "correct": 0, "category": "object"},
+        ],
+    )
+    _write_score(
+        tmp_path,
+        "cand",
+        "MiniBench",
+        [
+            {"index": 1, "question": "q1", "answer": "A", "prediction": "A", "correct": 1, "category": "motion"},
+            {"index": 2, "question": "q2", "answer": "B", "prediction": "B", "correct": 1, "category": "object"},
+        ],
+    )
+
+    payload = export_data(ResultLoader(str(tmp_path)), include_overlap=True)
+
     assert payload["overlap"]["datasets"] == ["MiniBench"]
     assert payload["overlap"]["pairwise_overlap"][0]["model_a"] == "base"
     assert payload["overlap"]["pairwise_overlap"][0]["model_b"] == "cand"
-    assert {
-        (row["baseline_model"], row["candidate_model"])
-        for row in payload["overlap"]["dataset_deltas"]
-    } == {("base", "cand"), ("cand", "base")}
-    assert payload["overlap"]["case_matrix"] == []

@@ -26,7 +26,7 @@ def _sanitize(obj):
     return obj
 
 
-def export_data(loader: ResultLoader) -> dict:
+def export_data(loader: ResultLoader, include_overlap: bool = False) -> dict:
     """Build the complete JSON data payload for the dashboard."""
     df = loader.load_all_column_scores()
     models = loader.models
@@ -57,15 +57,17 @@ def export_data(loader: ResultLoader) -> dict:
         if per_model:
             breakdowns[model] = per_model
 
-    return _sanitize({
+    payload = {
         'models': [{'key': model, 'color': loader.model_color(model)} for model in models],
         'table_groups': table_groups,
         'table_columns': table_columns,
         'scores': scores,
         'configs': configs,
         'breakdowns': breakdowns,
-        'overlap': loader.load_overlap_analysis(max_case_matrix=0),
-    })
+    }
+    if include_overlap:
+        payload['overlap'] = loader.load_overlap_analysis(max_case_matrix=0)
+    return _sanitize(payload)
 
 
 _TEMPLATE = r"""<!DOCTYPE html>
@@ -176,7 +178,7 @@ table.overlap-table td.left, table.overlap-table th.left { text-align:left; }
     <div class="tab active" onclick="switchTab('table')">Score Table</div>
     <div class="tab" onclick="switchTab('config')">Model Config</div>
     <div class="tab" onclick="switchTab('charts')">Charts</div>
-    <div class="tab" onclick="switchTab('overlap')">Overlap</div>
+    <div class="tab overlap-tab" style="display:none" onclick="switchTab('overlap')">Overlap</div>
   </div>
 </div>
 
@@ -715,7 +717,12 @@ function deltaClass(value) {
 }
 
 function initOverlapControls() {
-  if (!overlap) return;
+  const overlapTab = document.querySelector('.overlap-tab');
+  if (!overlap) {
+    if (overlapTab) overlapTab.style.display = 'none';
+    return;
+  }
+  if (overlapTab) overlapTab.style.display = '';
   const modelOptions = (overlap.models || models.map(m => m.key)).map(model => `<option value="${esc(model)}">${model}</option>`).join('');
   const datasetOptions = ['<option value="__all__">All</option>']
     .concat((overlap.datasets || []).map(dataset => `<option value="${esc(dataset)}">${dataset}</option>`))
@@ -917,9 +924,9 @@ renderTable();
 """
 
 
-def generate_dashboard(loader: ResultLoader, output_path: str):
+def generate_dashboard(loader: ResultLoader, output_path: str, include_overlap: bool = False):
     """Write a self-contained HTML dashboard to output_path."""
-    data = export_data(loader)
+    data = export_data(loader, include_overlap=include_overlap)
     data_json = json.dumps(data, ensure_ascii=False)
     content = _TEMPLATE.replace('/**__DATA__**/', data_json)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
@@ -928,12 +935,12 @@ def generate_dashboard(loader: ResultLoader, output_path: str):
     print(f'Dashboard written to {output_path}')
 
 
-def serve(loader: ResultLoader, port: int = 8890):
+def serve(loader: ResultLoader, port: int = 8890, include_overlap: bool = False):
     """Start an HTTP server that regenerates the dashboard on each request."""
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
-            data = export_data(loader)
+            data = export_data(loader, include_overlap=include_overlap)
             data_json = json.dumps(data, ensure_ascii=False)
             content = _TEMPLATE.replace('/**__DATA__**/', data_json)
             self.send_response(200)
@@ -960,15 +967,16 @@ def main():
     parser.add_argument('--work-dir', '--work_dir', required=True, help='Results directory')
     parser.add_argument('-o', '--output', default=None, help='Output HTML file (default: serve mode)')
     parser.add_argument('--port', type=int, default=8890)
+    parser.add_argument('--include-overlap', action='store_true', help='Include slow row-level overlap analysis')
     args = parser.parse_args()
 
     loader = ResultLoader(args.work_dir)
     print(f'Discovered {len(loader.models)} models, {len(loader.benchmarks)} benchmarks')
 
     if args.output:
-        generate_dashboard(loader, args.output)
+        generate_dashboard(loader, args.output, include_overlap=args.include_overlap)
     else:
-        serve(loader, args.port)
+        serve(loader, args.port, include_overlap=args.include_overlap)
 
 
 if __name__ == '__main__':
