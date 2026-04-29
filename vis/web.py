@@ -64,6 +64,7 @@ def export_data(loader: ResultLoader) -> dict:
         'scores': scores,
         'configs': configs,
         'breakdowns': breakdowns,
+        'overlap': loader.load_overlap_analysis(max_case_matrix=0),
     })
 
 
@@ -142,6 +143,29 @@ table.config-table td.diff { background:#fff3cd; }
 .chart-type-bar { display:flex; gap:4px; margin-bottom:12px; }
 .chart-type-btn { padding:4px 12px; border:1px solid #ccc; border-radius:4px; cursor:pointer; font-size:12px; background:#f9f9f9; }
 .chart-type-btn.active { background:#3498db; color:#fff; border-color:#3498db; }
+
+/* ── Overlap tab ── */
+.overlap-layout { display:flex; gap:16px; min-height:calc(100vh - 120px); }
+.overlap-sidebar { width:260px; flex-shrink:0; background:#fff; border-radius:8px; padding:12px; overflow-y:auto; max-height:calc(100vh - 120px); box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+.overlap-main { flex:1; display:flex; flex-direction:column; gap:16px; min-width:0; }
+.overlap-grid { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap:16px; }
+.overlap-panel { background:#fff; border-radius:8px; padding:12px; box-shadow:0 1px 3px rgba(0,0,0,0.1); min-width:0; }
+.overlap-panel h3 { font-size:13px; font-weight:600; margin-bottom:10px; color:#475569; }
+.overlap-chart { width:100%; height:300px; }
+.select-control { width:100%; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; background:#fff; font-size:12px; color:#334155; }
+.compact { max-height:260px; overflow:auto; }
+table.overlap-table { width:100%; border-collapse:collapse; font-size:12px; }
+table.overlap-table th, table.overlap-table td { padding:6px 8px; border:1px solid #e2e8f0; text-align:right; white-space:nowrap; }
+table.overlap-table th { background:#f1f5f9; color:#334155; font-weight:600; position:sticky; top:0; z-index:1; }
+table.overlap-table td.left, table.overlap-table th.left { text-align:left; }
+.delta-pos { color:#15803d; font-weight:700; }
+.delta-neg { color:#b91c1c; font-weight:700; }
+.empty-state { color:#94a3b8; text-align:center; padding:24px; font-size:13px; }
+@media (max-width: 980px) {
+  .overlap-layout { flex-direction:column; }
+  .overlap-sidebar { width:100%; max-height:none; }
+  .overlap-grid { grid-template-columns:1fr; }
+}
 </style>
 </head>
 <body>
@@ -152,6 +176,7 @@ table.config-table td.diff { background:#fff3cd; }
     <div class="tab active" onclick="switchTab('table')">Score Table</div>
     <div class="tab" onclick="switchTab('config')">Model Config</div>
     <div class="tab" onclick="switchTab('charts')">Charts</div>
+    <div class="tab" onclick="switchTab('overlap')">Overlap</div>
   </div>
 </div>
 
@@ -205,6 +230,45 @@ table.config-table td.diff { background:#fff3cd; }
       </div>
     </div>
   </div>
+
+  <div id="tab-overlap" style="display:none">
+    <div class="overlap-layout">
+      <div class="overlap-sidebar">
+        <div class="sidebar-section">
+          <h3>Baseline</h3>
+          <select id="overlap-baseline" class="select-control" onchange="setOverlapBaseline(this.value)"></select>
+        </div>
+        <div class="sidebar-section">
+          <h3>Candidate</h3>
+          <select id="overlap-candidate" class="select-control" onchange="setOverlapCandidate(this.value)"></select>
+        </div>
+        <div class="sidebar-section">
+          <h3>Dataset</h3>
+          <select id="overlap-dataset" class="select-control" onchange="setOverlapDataset(this.value)"></select>
+        </div>
+      </div>
+      <div class="overlap-main">
+        <div class="overlap-panel">
+          <h3>Pairwise Overlap</h3>
+          <div class="table-wrap compact" id="overlap-pair-table"></div>
+        </div>
+        <div class="overlap-grid">
+          <div class="overlap-panel">
+            <h3>Dataset Delta</h3>
+            <div class="overlap-chart" id="overlap-dataset-chart"></div>
+          </div>
+          <div class="overlap-panel">
+            <h3>Subclass Delta</h3>
+            <div class="overlap-chart" id="overlap-group-chart"></div>
+          </div>
+        </div>
+        <div class="overlap-panel">
+          <h3>Top Subclasses</h3>
+          <div class="table-wrap compact" id="overlap-group-table"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -217,6 +281,7 @@ const columnById = Object.fromEntries(tableColumns.map(col => [col.id, col]));
 const scores = DATA.scores || {};
 const configs = DATA.configs || {};
 const breakdowns = DATA.breakdowns || {};
+const overlap = DATA.overlap || null;
 
 let activeTab = 'table';
 let chartType = 'radar';
@@ -224,20 +289,26 @@ let selectedModels = new Set(models.map(m => m.key));
 let selectedBench = new Set(tableColumns.map(col => col.id));
 let selectedConfigModels = new Set(models.slice(0, Math.min(4, models.length)).map(m => m.key));
 let chartInstance = null;
+let overlapDatasetChart = null;
+let overlapGroupChart = null;
 let sortCol = null;
 let sortAsc = true;
 let expandedCell = null;
 let selectedTableModels = new Set(models.map(m => m.key));
+let overlapBaseline = overlap?.baseline || models[0]?.key || '';
+let overlapCandidate = (overlap?.models || []).find(m => m !== overlapBaseline) || overlap?.models?.[0] || '';
+let overlapDataset = '__all__';
 
 function switchTab(tab) {
   activeTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
-  ['table', 'config', 'charts'].forEach(t => {
+  ['table', 'config', 'charts', 'overlap'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === tab ? '' : 'none';
   });
   if (tab === 'charts') updateChart();
   if (tab === 'config') renderConfigTable();
+  if (tab === 'overlap') renderOverlap();
 }
 
 function configBadges(model) {
@@ -630,10 +701,215 @@ function renderBar(selModels, selCols) {
   });
 }
 
-window.addEventListener('resize', () => { if (chartInstance) chartInstance.resize(); });
+function fmtNum(value, digits = 2) {
+  return value == null ? '—' : Number(value).toFixed(digits);
+}
+
+function fmtPct(value) {
+  return value == null ? '—' : (Number(value) * 100).toFixed(1) + '%';
+}
+
+function deltaClass(value) {
+  if (value == null || Number(value) === 0) return '';
+  return Number(value) > 0 ? 'delta-pos' : 'delta-neg';
+}
+
+function initOverlapControls() {
+  if (!overlap) return;
+  const modelOptions = (overlap.models || models.map(m => m.key)).map(model => `<option value="${esc(model)}">${model}</option>`).join('');
+  const datasetOptions = ['<option value="__all__">All</option>']
+    .concat((overlap.datasets || []).map(dataset => `<option value="${esc(dataset)}">${dataset}</option>`))
+    .join('');
+  document.getElementById('overlap-baseline').innerHTML = modelOptions;
+  document.getElementById('overlap-candidate').innerHTML = modelOptions;
+  document.getElementById('overlap-dataset').innerHTML = datasetOptions;
+  document.getElementById('overlap-baseline').value = overlapBaseline;
+  document.getElementById('overlap-candidate').value = overlapCandidate;
+  document.getElementById('overlap-dataset').value = overlapDataset;
+}
+
+function setOverlapBaseline(value) {
+  overlapBaseline = value;
+  if (overlapCandidate === overlapBaseline) {
+    overlapCandidate = (overlap?.models || []).find(m => m !== overlapBaseline) || overlapCandidate;
+    const candEl = document.getElementById('overlap-candidate');
+    if (candEl) candEl.value = overlapCandidate;
+  }
+  renderOverlap();
+}
+
+function setOverlapCandidate(value) {
+  overlapCandidate = value;
+  renderOverlap();
+}
+
+function setOverlapDataset(value) {
+  overlapDataset = value;
+  renderOverlap();
+}
+
+function overlapDatasetFilter(row) {
+  return overlapDataset === '__all__' || row.dataset === overlapDataset;
+}
+
+function selectedPair(row) {
+  return (
+    (row.model_a === overlapBaseline && row.model_b === overlapCandidate) ||
+    (row.model_a === overlapCandidate && row.model_b === overlapBaseline)
+  );
+}
+
+function renderOverlap() {
+  if (!overlap || !(overlap.pairwise_overlap || []).length) {
+    document.getElementById('tab-overlap').innerHTML = '<div class="empty-state">No row-level overlap data</div>';
+    return;
+  }
+  renderOverlapPairTable();
+  renderOverlapDatasetChart();
+  renderOverlapGroupChart();
+  renderOverlapGroupTable();
+}
+
+function renderOverlapPairTable() {
+  const rows = (overlap.pairwise_overlap || [])
+    .filter(overlapDatasetFilter)
+    .filter(row => selectedPair(row))
+    .sort((a, b) => (b.disagreement_rate || 0) - (a.disagreement_rate || 0));
+  const visible = rows.length ? rows : (overlap.pairwise_overlap || []).filter(overlapDatasetFilter).slice(0, 50);
+  if (!visible.length) {
+    document.getElementById('overlap-pair-table').innerHTML = '<div class="empty-state">No overlap rows</div>';
+    return;
+  }
+
+  let h = '<table class="overlap-table"><thead><tr>';
+  ['Dataset', 'Model A', 'Model B', 'Shared', 'Both ✓', 'A only', 'B only', 'Both ×', 'Disagree', 'Δ B-A'].forEach((label, idx) => {
+    h += `<th class="${idx < 3 ? 'left' : ''}">${label}</th>`;
+  });
+  h += '</tr></thead><tbody>';
+  visible.forEach(row => {
+    h += '<tr>';
+    h += `<td class="left">${row.dataset}</td>`;
+    h += `<td class="left">${row.model_a}</td>`;
+    h += `<td class="left">${row.model_b}</td>`;
+    h += `<td>${row.shared_cases}</td>`;
+    h += `<td>${row.both_correct}</td>`;
+    h += `<td>${row.model_a_only}</td>`;
+    h += `<td>${row.model_b_only}</td>`;
+    h += `<td>${row.both_wrong}</td>`;
+    h += `<td>${fmtPct(row.disagreement_rate)}</td>`;
+    h += `<td class="${deltaClass(row.delta_b_minus_a)}">${fmtNum(row.delta_b_minus_a)}</td>`;
+    h += '</tr>';
+  });
+  h += '</tbody></table>';
+  document.getElementById('overlap-pair-table').innerHTML = h;
+}
+
+function selectedDatasetDeltas() {
+  return (overlap.dataset_deltas || [])
+    .filter(row => row.baseline_model === overlapBaseline)
+    .filter(row => !overlapCandidate || row.candidate_model === overlapCandidate)
+    .filter(overlapDatasetFilter);
+}
+
+function renderOverlapDatasetChart() {
+  const el = document.getElementById('overlap-dataset-chart');
+  if (!overlapDatasetChart) overlapDatasetChart = echarts.init(el);
+  overlapDatasetChart.clear();
+  const rows = selectedDatasetDeltas().sort((a, b) => a.delta - b.delta);
+  if (!rows.length) {
+    overlapDatasetChart.setOption({ title: { text: 'No dataset deltas', left: 'center', top: 'center', textStyle: { color: '#94a3b8', fontSize: 13 } } });
+    return;
+  }
+  overlapDatasetChart.setOption({
+    grid: { left: 140, right: 32, top: 12, bottom: 24 },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    xAxis: { type: 'value', name: 'Δ' },
+    yAxis: {
+      type: 'category',
+      data: rows.map(row => row.dataset),
+      axisLabel: { fontSize: 10, width: 130, overflow: 'truncate' },
+    },
+    series: [{
+      type: 'bar',
+      data: rows.map(row => row.delta),
+      itemStyle: { color: p => p.value >= 0 ? '#55A868' : '#C44E52' },
+      label: { show: true, position: 'right', fontSize: 10, formatter: p => Number(p.value).toFixed(2) },
+    }],
+  });
+}
+
+function selectedGroupDeltas() {
+  return (overlap.group_deltas || [])
+    .filter(row => row.baseline_model === overlapBaseline)
+    .filter(row => !overlapCandidate || row.candidate_model === overlapCandidate)
+    .filter(overlapDatasetFilter)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+}
+
+function renderOverlapGroupChart() {
+  const el = document.getElementById('overlap-group-chart');
+  if (!overlapGroupChart) overlapGroupChart = echarts.init(el);
+  overlapGroupChart.clear();
+  const rows = selectedGroupDeltas().slice(0, 12).sort((a, b) => a.delta - b.delta);
+  if (!rows.length) {
+    overlapGroupChart.setOption({ title: { text: 'No subclass deltas', left: 'center', top: 'center', textStyle: { color: '#94a3b8', fontSize: 13 } } });
+    return;
+  }
+  overlapGroupChart.setOption({
+    grid: { left: 170, right: 32, top: 12, bottom: 24 },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    xAxis: { type: 'value', name: 'Δ' },
+    yAxis: {
+      type: 'category',
+      data: rows.map(row => `${row.dataset}/${row.label}`),
+      axisLabel: { fontSize: 10, width: 160, overflow: 'truncate' },
+    },
+    series: [{
+      type: 'bar',
+      data: rows.map(row => row.delta),
+      itemStyle: { color: p => p.value >= 0 ? '#55A868' : '#C44E52' },
+      label: { show: true, position: 'right', fontSize: 10, formatter: p => Number(p.value).toFixed(2) },
+    }],
+  });
+}
+
+function renderOverlapGroupTable() {
+  const rows = selectedGroupDeltas().slice(0, 80);
+  if (!rows.length) {
+    document.getElementById('overlap-group-table').innerHTML = '<div class="empty-state">No subclass rows</div>';
+    return;
+  }
+  let h = '<table class="overlap-table"><thead><tr>';
+  ['Dataset', 'Candidate', 'Group', 'N', 'Base', 'Cand', 'Δ', 'Fix', 'Drop'].forEach((label, idx) => {
+    h += `<th class="${idx < 3 ? 'left' : ''}">${label}</th>`;
+  });
+  h += '</tr></thead><tbody>';
+  rows.forEach(row => {
+    h += '<tr>';
+    h += `<td class="left">${row.dataset}</td>`;
+    h += `<td class="left">${row.candidate_model}</td>`;
+    h += `<td class="left">${row.label}</td>`;
+    h += `<td>${row.sample_count}</td>`;
+    h += `<td>${fmtNum(row.baseline_score)}</td>`;
+    h += `<td>${fmtNum(row.candidate_score)}</td>`;
+    h += `<td class="${deltaClass(row.delta)}">${fmtNum(row.delta)}</td>`;
+    h += `<td>${row.fixes}</td>`;
+    h += `<td>${row.drops}</td>`;
+    h += '</tr>';
+  });
+  h += '</tbody></table>';
+  document.getElementById('overlap-group-table').innerHTML = h;
+}
+
+window.addEventListener('resize', () => {
+  if (chartInstance) chartInstance.resize();
+  if (overlapDatasetChart) overlapDatasetChart.resize();
+  if (overlapGroupChart) overlapGroupChart.resize();
+});
 initTableSidebar();
 initSidebar();
 initConfigSidebar();
+initOverlapControls();
 renderTable();
 </script>
 </body>

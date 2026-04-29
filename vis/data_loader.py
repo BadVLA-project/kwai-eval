@@ -18,6 +18,7 @@ from .config import (
     VIDEO_MME_TABLE_COLUMNS,
     VINOGROUND_TABLE_COLUMNS,
 )
+from .overlap_analysis import build_overlap_analysis
 
 
 class ResultLoader:
@@ -32,6 +33,7 @@ class ResultLoader:
         self._model_configs = {}  # model -> config dict
         self._merged_data = {}
         self._data_cache = {}
+        self._overlap_cache = {}
         self._table_groups = []
         self._table_columns = []
         self._table_column_map = {}
@@ -404,6 +406,27 @@ class ResultLoader:
 
     def model_config(self, model):
         return self._model_configs.get(model)
+
+    def load_overlap_analysis(self, max_case_matrix=0):
+        """Build row-level answer overlap data for dashboard tabs."""
+        if len(self._models) < 2:
+            return None
+        if max_case_matrix in self._overlap_cache:
+            return self._overlap_cache[max_case_matrix]
+        try:
+            analysis = build_overlap_analysis(
+                self.work_dir,
+                models=self._models,
+                baseline=self._models[0] if self._models else None,
+                max_case_matrix=max_case_matrix,
+                all_baselines=True,
+            )
+        except Exception:
+            return None
+        if not analysis.get('pairwise_overlap'):
+            return None
+        self._overlap_cache[max_case_matrix] = analysis
+        return analysis
 
     # ── Score loading ─────────────────────────────────────────────────────
 
