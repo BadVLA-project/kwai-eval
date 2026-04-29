@@ -5,7 +5,7 @@ from ..smp.file import get_intermediate_file_path, get_file_extension
 from .video_base import VideoBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
 from .vdc_logging import build_vdc_judge_io_logs
-from .vdc_utils import find_vdc_data_file, find_vdc_video_root, resolve_vdc_local_path
+from .vdc_utils import ensure_vdc_data_file, find_vdc_video_root, resolve_vdc_local_path
 from ..utils import track_progress_rich
 import random
 import json
@@ -156,8 +156,9 @@ class VDC(VideoBaseDataset):
 
     def prepare_dataset(self, dataset_name='VDC', repo_id='Enxin/VLMEval-VDC'):
         def check_integrity(pth):
-            data_file = find_vdc_data_file(pth, dataset_name)
-            if not osp.exists(data_file):
+            try:
+                data_file = ensure_vdc_data_file(pth, dataset_name)
+            except FileNotFoundError:
                 return False
             if self.MD5 and md5(data_file) != self.MD5:
                 return False
@@ -225,9 +226,9 @@ class VDC(VideoBaseDataset):
                 else:
                     dataset_path = snapshot_download(repo_id=repo_id, repo_type="dataset")
 
+        data_file = ensure_vdc_data_file(dataset_path, dataset_name)
         ensure_video_data(dataset_path)
         self.video_path = find_vdc_video_root(dataset_path)
-        data_file = find_vdc_data_file(dataset_path, dataset_name)
 
         return dict(data_file=data_file, root=self.video_path)
 
@@ -448,7 +449,7 @@ class VDC(VideoBaseDataset):
                 )
 
             pred_map = load(response_file)
-            data_un['pred_response'] = [pred_map[idx] for idx in data_un['index']]
+            data_un['pred_response'] = [pred_map.get(idx, FAIL_MSG) for idx in indices]
             score_prompts = [prepare_score_prompt(data_un.iloc[i]) for i in range(lt)]
             model.system_prompt = SYSTEM_CAL_SCORE_PROMPT
             if len(score_prompts):
