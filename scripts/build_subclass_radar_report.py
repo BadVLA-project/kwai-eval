@@ -11,14 +11,14 @@ REPO_ROOT = osp.dirname(osp.dirname(osp.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from vis.subclass_radar import DEFAULT_BENCHMARKS, build_subclass_radar_report
+from vis.subclass_radar import build_subclass_radar_report
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build subclass radar report for selected benchmarks")
     parser.add_argument("--work-dir", required=True, help="Evaluation result root directory")
     parser.add_argument("--out-dir", required=True, help="Output directory")
-    parser.add_argument("--benchmarks", nargs="*", default=DEFAULT_BENCHMARKS, help="Benchmark families")
+    parser.add_argument("--benchmarks", nargs="*", default=None, help="Benchmark families (default: auto-discover)")
     parser.add_argument("--models", nargs="*", default=None, help="Optional model directory names")
     return parser.parse_args()
 

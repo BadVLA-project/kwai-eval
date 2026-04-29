@@ -8,6 +8,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vis.subclass_radar import build_subclass_radar_report
+from vis.subclass_radar import build_subclass_radar_payload
 from vis.data_loader import ResultLoader
 from vis.web import export_data
 
@@ -42,6 +43,28 @@ def _write_aot(root, model, subset, score):
 def _write_mlvu(root, model, scores):
     path = _model_dir(root, model) / f"{model}_MLVU_MCQ_score.json"
     path.write_text(json.dumps(scores), encoding="utf-8")
+
+
+def _write_videott(root, model):
+    payload = {
+        "Character Motivation Causality": {"number": 10, "correct": 6, "score": 60.0},
+        "Event Localization": {"number": 10, "correct": 4, "score": 40.0},
+        "overall": {"number": 20, "correct": 10, "score": 50.0},
+    }
+    path = _model_dir(root, model) / f"{model}_Video-TT_adaptive_rating.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_video_holmes(root, model):
+    payload = {
+        "acc_by_type": {
+            "SR": {"correct": 5, "total": 10, "acc": 0.5},
+            "IMC": {"correct": 7, "total": 10, "acc": 0.7},
+        },
+        "total": {"correct": 12, "total": 20, "acc": 0.6},
+    }
+    path = _model_dir(root, model) / f"{model}_Video_Holmes_adaptive_rating.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _write_four_bench_fixture(root):
@@ -123,3 +146,20 @@ def test_dashboard_export_includes_subclass_radar_payload(tmp_path):
     assert "subclass_radar" in payload
     assert payload["subclass_radar"]["by_bench"]["MVBench"]["skipped"] is False
     assert payload["subclass_radar"]["by_bench"]["VideoMME"]["dimension"] == "overall/task_type"
+
+
+def test_dashboard_subclass_radar_auto_discovers_video_specialized_benchmarks(tmp_path):
+    _write_videott(tmp_path, "base")
+    _write_video_holmes(tmp_path, "base")
+
+    payload = build_subclass_radar_payload(ResultLoader(str(tmp_path)))
+
+    assert "Video-TT_adaptive" in payload["benchmarks"]
+    assert "Video_Holmes_adaptive" in payload["benchmarks"]
+    assert payload["by_bench"]["Video-TT_adaptive"]["dimensions"] == [
+        "Character Motivation Causality",
+        "Event Localization",
+    ]
+    assert payload["by_bench"]["Video-TT_adaptive"]["dimension"] == "score"
+    assert payload["by_bench"]["Video_Holmes_adaptive"]["dimensions"] == ["IMC", "SR"]
+    assert payload["by_bench"]["Video_Holmes_adaptive"]["dimension"] == "acc_by_type/acc"

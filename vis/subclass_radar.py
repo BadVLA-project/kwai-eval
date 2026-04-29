@@ -32,6 +32,13 @@ DIMENSION_PREFIXES = {
     ],
 }
 
+NESTED_DIMENSION_PATTERNS = [
+    ("acc_by_type/", "/acc", "acc_by_type/acc"),
+    ("", "/score", "score"),
+    ("", "/acc", "acc"),
+    ("", "/accuracy", "accuracy"),
+]
+
 SUMMARY_KEYS = {
     "AVG",
     "Average",
@@ -54,6 +61,13 @@ def _norm_name(text: str) -> str:
 
 def _bench_matches(bench: str, family: str) -> bool:
     return _norm_name(bench).startswith(_norm_name(family))
+
+
+def _dimension_prefixes(family: str) -> list[tuple[str, str]]:
+    norm = _norm_name(family)
+    if "VIDEOMME" in norm:
+        return DIMENSION_PREFIXES["VideoMME"]
+    return DIMENSION_PREFIXES.get(family, [])
 
 
 def _strip_family_prefix(bench: str, family: str) -> str:
@@ -91,7 +105,7 @@ def _extract_dimensions(
     if not isinstance(breakdown, dict) or not breakdown:
         return "", {}
 
-    for prefix, dimension_name in DIMENSION_PREFIXES.get(family, []):
+    for prefix, dimension_name in _dimension_prefixes(family):
         rows = {}
         for key, value in breakdown.items():
             if not str(key).startswith(prefix):
@@ -99,6 +113,23 @@ def _extract_dimensions(
             score = _score(loader, value)
             if score is not None:
                 rows[str(key)[len(prefix) :]] = score
+        if len(rows) >= 2:
+            return dimension_name, rows
+
+    for prefix, suffix, dimension_name in NESTED_DIMENSION_PATTERNS:
+        rows = {}
+        for key, value in breakdown.items():
+            key = str(key)
+            if prefix and not key.startswith(prefix):
+                continue
+            if not key.endswith(suffix):
+                continue
+            label = key[len(prefix) : len(key) - len(suffix)]
+            if not label or "/" in label or label in SUMMARY_KEYS:
+                continue
+            score = _score(loader, value)
+            if score is not None:
+                rows[label] = score
         if len(rows) >= 2:
             return dimension_name, rows
 
@@ -300,6 +331,33 @@ __SECTIONS__
         f.write(html)
 
 
+def discover_subclass_benchmarks(loader: ResultLoader) -> list[str]:
+    """Return discovered top-level benchmarks that expose at least two sub-dimensions."""
+    benchmarks = []
+    for bench in loader.benchmarks:
+        if "/" in bench:
+            continue
+        report = _collect_family(loader, bench)
+        if report and not report.get("skipped"):
+            benchmarks.append(bench)
+    return benchmarks
+
+
+def default_subclass_benchmarks(loader: ResultLoader) -> list[str]:
+    """Return canonical known families plus other discovered subclass benchmarks."""
+    requested = []
+    for family in DEFAULT_BENCHMARKS:
+        report = _collect_family(loader, family)
+        if report and not report.get("skipped"):
+            requested.append(family)
+
+    for bench in discover_subclass_benchmarks(loader):
+        if any(_bench_matches(bench, family) for family in DEFAULT_BENCHMARKS):
+            continue
+        requested.append(bench)
+    return requested
+
+
 def build_subclass_radar_report(
     work_dir: str,
     out_dir: str,
@@ -311,7 +369,7 @@ def build_subclass_radar_report(
         keep = set(models)
         loader._models = [model for model in loader.models if model in keep]
 
-    requested = benchmarks or DEFAULT_BENCHMARKS
+    requested = benchmarks if benchmarks is not None else default_subclass_benchmarks(loader)
     _ensure_dir(out_dir)
     by_bench_dir = osp.join(out_dir, "by_bench")
     _ensure_dir(by_bench_dir)
@@ -356,7 +414,7 @@ def build_subclass_radar_payload(
     benchmarks: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build dashboard-ready subclass radar data without writing files."""
-    requested = benchmarks or DEFAULT_BENCHMARKS
+    requested = benchmarks if benchmarks is not None else default_subclass_benchmarks(loader)
     report: dict[str, Any] = {
         "benchmarks": [],
         "models": loader.models,
