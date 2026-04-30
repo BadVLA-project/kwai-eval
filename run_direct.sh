@@ -131,6 +131,10 @@ if [ -n "${DATA:-}" ]; then
   read -ra DATASETS <<< "${DATA}"
 else
   DATASETS=(
+    LongVideoBench_adaptive
+    Video-MME-v2_adaptive
+    VideoMMMU_adaptive
+    TempCompass_MCQ_adaptive
     Video-MME_adaptive
     TimeLensBench_Charades_adaptive
     TimeLensBench_ActivityNet_adaptive
@@ -157,7 +161,11 @@ if [ -n "${MODELS:-}" ]; then
   read -ra MODEL_LIST <<< "${MODELS}"
 else
   MODEL_LIST=(
-    Qwen3-VL-4B-Instruct-R2-opd
+    Qwen3-VL-4B-Instruct
+    Qwen3-VL-4B-Instruct-R1R2R3-mopd
+    Qwen3-VL-4B-Instruct-R1
+    Qwen3-VL-4B-Instruct-R2
+    Qwen3-VL-4B-Instruct-R3
   )
 fi
 
