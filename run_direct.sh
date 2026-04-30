@@ -131,6 +131,7 @@ if [ -n "${DATA:-}" ]; then
   read -ra DATASETS <<< "${DATA}"
 else
   DATASETS=(
+    Video-MME_adaptive
     TimeLensBench_Charades_adaptive
     TimeLensBench_ActivityNet_adaptive
     TimeLensBench_QVHighlights_adaptive
@@ -143,7 +144,6 @@ else
     AoTBench_QA_adaptive
     MVBench_MP4_adaptive
     Video_Holmes_adaptive
-    Video-MME_adaptive
     ETBench_adaptive
     MLVU_MCQ_adaptive
   )
@@ -157,7 +157,7 @@ if [ -n "${MODELS:-}" ]; then
   read -ra MODEL_LIST <<< "${MODELS}"
 else
   MODEL_LIST=(
-    Qwen3-VL-4B-Instruct
+    Qwen3-VL-4B-Instruct-R2-opd
   )
 fi
 
@@ -165,7 +165,7 @@ fi
 # 8. Work directory and run settings
 # ===========================================================================
 WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_final}"
-REUSE="${REUSE:-0}"
+REUSE="${REUSE:-1}"
 RETRY_NAN="${RETRY_NAN:-0}"
 DELAY="${DELAY:-15}"
 EVAL_ID_MODE="${EVAL_ID_MODE:-day}"
@@ -304,3 +304,9 @@ trap cleanup_filler EXIT
 #     TimeLensBench_Charades_adaptive
 #     TimeLensBench_ActivityNet_adaptive
 #     TimeLensBench_QVHighlights_adaptive
+    # Qwen3-VL-4B-Instruct-R1        # base + hier_seg
+    # Qwen3-VL-4B-Instruct-R2        # base + aot
+    # Qwen3-VL-4B-Instruct-R3        # base + event_logic
+    # Qwen3-VL-4B-Instruct-R1R2      # base + hier_seg + aot
+    # Qwen3-VL-4B-Instruct-R1R2R3    # base + hier_seg + event_logic + aot
+    # Qwen3-VL-4B-Desc10K-SFT

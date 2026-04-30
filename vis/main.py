@@ -2,7 +2,7 @@
 """Eval dashboard — auto-discovers models and benchmarks from work_dir.
 
 Usage:
-    python -m vis.main --work-dir /m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct              # serve at port 8890
+    python -m vis.main --work-dir /m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_final              # serve at port 8890
     python -m vis.main --work-dir /path/to/results --port 9000  # custom port
     python -m vis.main --work-dir /path/to/results -o out.html  # export HTML file
 """
