@@ -2,6 +2,7 @@ from huggingface_hub import snapshot_download
 from ..smp import *
 from .video_base import VideoBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
+from .longvideobench_utils import resolve_longvideobench_dir
 from glob import glob
 import os
 
@@ -123,7 +124,8 @@ class LongVideoBench(VideoBaseDataset):
         if modelscope_flag_set():
             repo_id = "AI-ModelScope/LongVideoBench"
 
-        cache_path = get_cache_path(repo_id)
+        local_target_path = resolve_longvideobench_dir()
+        cache_path = local_target_path or get_cache_path(repo_id)
 
         if cache_path is None:
             cache_path = osp.expanduser("~/.cache/huggingface/hub/datasets--longvideobench--LongVideoBench")
@@ -145,12 +147,15 @@ class LongVideoBench(VideoBaseDataset):
 
                 data_file.to_csv(osp.join(pth, f'{dataset_name}.tsv'), sep='\t', index=False)
 
-            if modelscope_flag_set():
-                from modelscope import dataset_snapshot_download
-                dataset_snapshot_download(dataset_id=repo_id)
+            if local_target_path is None:
+                if modelscope_flag_set():
+                    from modelscope import dataset_snapshot_download
+                    cache_path = dataset_snapshot_download(dataset_id=repo_id)
+                else:
+                    cache_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                print("All videos are downloaded for LongVideoBench")
             else:
-                snapshot_download(repo_id=repo_id, repo_type='dataset')
-            print("All videos are downloaded for LongVideoBench")
+                print(f"Loading LongVideoBench from local path: {cache_path}")
 
             if not glob(osp.join(cache_path, "videos")):
                 tar_files = glob(osp.join(cache_path, "**/*.tar*"), recursive=True)

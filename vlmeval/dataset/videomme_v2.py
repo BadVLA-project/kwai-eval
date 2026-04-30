@@ -6,6 +6,11 @@ from ..smp import *
 from ..smp.file import get_intermediate_file_path, get_file_extension
 from .video_base import VideoBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
+from .videomme_v2_utils import (
+    resolve_videommev2_paths,
+    resolve_videommev2_video_path,
+    videommev2_video_relpath,
+)
 
 FAIL_MSG = 'Failed to obtain answer via API.'
 
@@ -98,20 +103,46 @@ class VideoMMEv2(VideoBaseDataset):
                         print(f'Error unzipping {zip_file}: {e}')
                 print('Video files restored.')
 
-        def generate_tsv(pth):
-            data_file = osp.join(pth, f'{dataset_name}.tsv')
-            if os.path.exists(data_file):
+        def unzip_subtitle_from_source(paths):
+            if not paths or not paths.subtitle_zip:
+                return
+            if os.path.exists(paths.subtitle_dir) and len(os.listdir(paths.subtitle_dir)) > 0:
                 return
 
-            parquet_file = None
-            for candidate in [
-                osp.join(pth, 'test-00000-of-00001.parquet'),
-                osp.join(pth, 'videommev2', 'test-00000-of-00001.parquet'),
-                osp.join(pth, 'data', 'test-00000-of-00001.parquet'),
-            ]:
-                if os.path.exists(candidate):
-                    parquet_file = candidate
-                    break
+            import zipfile
+            os.makedirs(paths.subtitle_dir, exist_ok=True)
+            with zipfile.ZipFile(paths.subtitle_zip, 'r') as zip_ref:
+                for member in zip_ref.namelist():
+                    if member.endswith('/'):
+                        continue
+                    source = zip_ref.open(member)
+                    target = open(os.path.join(paths.subtitle_dir, os.path.basename(member)), 'wb')
+                    with source, target:
+                        target.write(source.read())
+            print(f'Subtitle files restored to {paths.subtitle_dir}.')
+
+        def generate_tsv(
+            pth,
+            data_file=None,
+            parquet_file=None,
+            source_root=None,
+            subtitle_dir='./subtitle',
+            overwrite=False,
+        ):
+            data_file = data_file or osp.join(pth, f'{dataset_name}.tsv')
+            if os.path.exists(data_file) and not overwrite:
+                return data_file
+
+            if parquet_file is None:
+                for candidate in [
+                    osp.join(pth, 'test.parquet'),
+                    osp.join(pth, 'test-00000-of-00001.parquet'),
+                    osp.join(pth, 'videommev2', 'test-00000-of-00001.parquet'),
+                    osp.join(pth, 'data', 'test-00000-of-00001.parquet'),
+                ]:
+                    if os.path.exists(candidate):
+                        parquet_file = candidate
+                        break
 
             if parquet_file is None:
                 # Try finding any parquet file
@@ -125,14 +156,23 @@ class VideoMMEv2(VideoBaseDataset):
 
             if parquet_file is None:
                 print(f'Warning: No parquet file found in {pth}, cannot generate TSV.')
-                return
+                return data_file
 
             print(f'Generating TSV from {parquet_file}...')
             df = pd.read_parquet(parquet_file)
             df = df.assign(index=range(len(df)))
             df['video'] = df['video_id'].apply(str)
-            df['video_path'] = df['video_id'].apply(lambda x: f'./video/{x}.mp4')
-            df['subtitle_path'] = df['video_id'].apply(lambda x: f'./subtitle/{x}.jsonl')
+            root_for_video = source_root or pth
+            df['video_path'] = df['video_id'].apply(lambda x: videommev2_video_relpath(root_for_video, x))
+            if os.path.isabs(subtitle_dir) and source_root is not None:
+                df['subtitle_path'] = df['video_id'].apply(
+                    lambda x: os.path.join(subtitle_dir, f'{x}.jsonl')
+                )
+            else:
+                subtitle_rel = os.path.relpath(subtitle_dir, source_root or pth)
+                df['subtitle_path'] = df['video_id'].apply(
+                    lambda x: './' + os.path.join(subtitle_rel, f'{x}.jsonl').replace(os.sep, '/')
+                )
 
             # options may be a numpy array or list; convert to string representation
             if 'options' in df.columns:
@@ -146,21 +186,33 @@ class VideoMMEv2(VideoBaseDataset):
                 'second_head', 'third_head', 'subtitle_path'
             ]
             df = df[[c for c in keep_cols if c in df.columns]]
+            os.makedirs(osp.dirname(data_file), exist_ok=True)
             df.to_csv(data_file, sep='\t', index=False)
             print(f'TSV generated: {data_file}')
+            return data_file
 
-        # Try local path first
-        local_target_path = '/m2v_intern/xuboshen/zgw/Benchmarks/Video-MME-v2'
+        local_paths = resolve_videommev2_paths(dataset_name=dataset_name)
 
-        if os.path.exists(local_target_path):
-            print(f'Loading Video-MME-v2 from local path: {local_target_path}')
-            dataset_path = local_target_path
-            unzip_videos(dataset_path)
-            generate_tsv(dataset_path)
+        if local_paths is not None:
+            print(f'Loading Video-MME-v2 from local read path: {local_paths.source_root}')
+            print(f'Writing Video-MME-v2 artifacts to: {local_paths.artifact_root}')
+            dataset_path = local_paths.source_root
+            self.artifact_root = local_paths.artifact_root
+            self.subtitle_root = local_paths.subtitle_dir
+            unzip_subtitle_from_source(local_paths)
+            data_file = generate_tsv(
+                local_paths.source_root,
+                data_file=local_paths.tsv_file,
+                parquet_file=local_paths.parquet_file,
+                source_root=local_paths.source_root,
+                subtitle_dir=local_paths.subtitle_dir,
+                overwrite=True,
+            )
         else:
             cache_path = get_cache_path(repo_id)
             if cache_path is not None and check_integrity(cache_path):
                 dataset_path = cache_path
+                data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
             else:
                 if modelscope_flag_set():
                     from modelscope import dataset_snapshot_download
@@ -168,13 +220,12 @@ class VideoMMEv2(VideoBaseDataset):
                 else:
                     dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
                 unzip_videos(dataset_path)
-                generate_tsv(dataset_path)
+                data_file = generate_tsv(dataset_path)
 
-        data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
         return dict(data_file=data_file, root=dataset_path)
 
     def save_video_frames(self, video, video_llm=False):
-        vid_path = osp.join(self.data_root, 'video', video + '.mp4')
+        vid_path = resolve_videommev2_video_path(self.data_root, video)
         import decord
         vid = decord.VideoReader(vid_path)
         video_info = {
@@ -299,7 +350,11 @@ class VideoMMEv2(VideoBaseDataset):
         # Load subtitles if needed
         sub_entries = None
         if self.use_subtitle:
-            sub_path = osp.join(self.data_root, line['subtitle_path'])
+            sub_path = str(line['subtitle_path'])
+            if sub_path.startswith('./'):
+                sub_path = sub_path[2:]
+            if not osp.isabs(sub_path):
+                sub_path = osp.join(self.data_root, sub_path)
             if os.path.exists(sub_path):
                 sub_entries = self._load_subtitle_jsonl(sub_path)
 
@@ -307,7 +362,7 @@ class VideoMMEv2(VideoBaseDataset):
 
         if video_llm:
             message.append(dict(type='video',
-                                value=osp.join(self.data_root, 'video', line['video'] + '.mp4')))
+                                value=resolve_videommev2_video_path(self.data_root, line['video'])))
         else:
             if self.use_subtitle and self.subtitle_mode == 'interleave' and sub_entries:
                 interleaved = self._build_subtitle_interleave(

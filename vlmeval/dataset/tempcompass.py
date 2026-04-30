@@ -9,6 +9,7 @@ import torchvision.transforms as T
 from torchvision import transforms
 from torchvision.transforms.functional import InterpolationMode
 from .utils.tempcompass import *
+from .tempcompass_utils import resolve_tempcompass_dir
 
 
 FAIL_MSG = 'Failed to obtain answer via API.'
@@ -88,7 +89,8 @@ class TempCompass_MCQ(VideoBaseDataset):
                     return False
             return True
 
-        cache_path = get_cache_path(repo_id)
+        local_target_path = resolve_tempcompass_dir()
+        cache_path = local_target_path or get_cache_path(repo_id)
         if cache_path is not None and check_integrity(cache_path):
             dataset_path = cache_path
         else:
@@ -130,11 +132,14 @@ class TempCompass_MCQ(VideoBaseDataset):
                 data_df = data_df.assign(index=range(len(data_df)))
                 data_df.to_csv(data_file, sep='\t', index=False)
 
-            if modelscope_flag_set():
-                from modelscope import dataset_snapshot_download
-                dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+            if local_target_path is not None:
+                dataset_path = local_target_path
             else:
-                dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                if modelscope_flag_set():
+                    from modelscope import dataset_snapshot_download
+                    dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+                else:
+                    dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
             read_parquet(dataset_path)
             unzip_videos(dataset_path)
             generate_tsv(dataset_path)
@@ -285,7 +290,8 @@ class TempCompass_Captioning(VideoBaseDataset):
                     return False
             return True
 
-        cache_path = get_cache_path(repo_id)
+        local_target_path = resolve_tempcompass_dir()
+        cache_path = local_target_path or get_cache_path(repo_id)
         if cache_path is not None and check_integrity(cache_path):
             dataset_path = cache_path
         else:
@@ -328,11 +334,14 @@ class TempCompass_Captioning(VideoBaseDataset):
                 data_df = data_df.assign(index=range(len(data_df)))
                 data_df.to_csv(data_file, sep='\t', index=False)
 
-            if modelscope_flag_set():
-                from modelscope import dataset_snapshot_download
-                dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+            if local_target_path is not None:
+                dataset_path = local_target_path
             else:
-                dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                if modelscope_flag_set():
+                    from modelscope import dataset_snapshot_download
+                    dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+                else:
+                    dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
             read_parquet(dataset_path)
             unzip_videos(dataset_path)
             generate_tsv(dataset_path)
@@ -482,7 +491,8 @@ class TempCompass_YorN(VideoBaseDataset):
                     return False
             return True
 
-        cache_path = get_cache_path(repo_id)
+        local_target_path = resolve_tempcompass_dir()
+        cache_path = local_target_path or get_cache_path(repo_id)
         if cache_path is not None and check_integrity(cache_path):
             dataset_path = cache_path
         else:
@@ -523,11 +533,14 @@ class TempCompass_YorN(VideoBaseDataset):
                 data_df = data_df.assign(index=range(len(data_df)))
                 data_df.to_csv(data_file, sep='\t', index=False)
 
-            if modelscope_flag_set():
-                from modelscope import dataset_snapshot_download
-                dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+            if local_target_path is not None:
+                dataset_path = local_target_path
             else:
-                dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+                if modelscope_flag_set():
+                    from modelscope import dataset_snapshot_download
+                    dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+                else:
+                    dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
             read_parquet(dataset_path)
             unzip_videos(dataset_path)
             generate_tsv(dataset_path)

@@ -9,6 +9,7 @@ from ..smp import *
 from ..smp.file import get_intermediate_file_path, get_file_extension
 from .video_base import VideoBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
+from .videommmu_utils import resolve_videommmu_dir
 
 FAIL_MSG = 'Failed to obtain answer via API.'
 
@@ -553,9 +554,9 @@ class VideoMMMU(VideoBaseDataset):
             df.to_csv(data_file, sep='\t', index=False)
 
         # === LOCAL PATH PRIORITY ===
-        local_target_path = '/m2v_intern/xuboshen/zgw/Benchmarks/VideoMMMU'
+        local_target_path = resolve_videommmu_dir()
 
-        if os.path.exists(local_target_path):
+        if local_target_path and os.path.exists(local_target_path):
             print(f'Loading VideoMMMU from local path: {local_target_path}')
             dataset_path = local_target_path
             unzip_hf_zip(dataset_path)

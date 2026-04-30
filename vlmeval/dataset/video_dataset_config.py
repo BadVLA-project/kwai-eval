@@ -9,6 +9,14 @@ vcrbench_dataset = {
     'VCRBench_1fps_nopack': partial(VCRBench, dataset='VCR-Bench', fps=1.0, pack=False)
 }
 
+cvbench_video_dataset = {
+    'CVBench_8frame': partial(CVBenchVideo, dataset='CVBench', nframe=8),
+    'CVBench_16frame': partial(CVBenchVideo, dataset='CVBench', nframe=16),
+    'CVBench_32frame': partial(CVBenchVideo, dataset='CVBench', nframe=32),
+    'CVBench_64frame': partial(CVBenchVideo, dataset='CVBench', nframe=64),
+    'CVBench_1fps': partial(CVBenchVideo, dataset='CVBench', fps=1.0),
+}
+
 mmbench_video_dataset = {
     'MMBench_Video_8frame_nopack': partial(MMBenchVideo, dataset='MMBench-Video', nframe=8, pack=False),
     'MMBench_Video_8frame_pack': partial(MMBenchVideo, dataset='MMBench-Video', nframe=8, pack=True),
@@ -414,7 +422,7 @@ dataset_groups = [
     mmbench_video_dataset, mvbench_dataset, videomme_dataset, videomme_v2_dataset, videommmu_dataset, longvideobench_dataset,
     mlvu_dataset, tempcompass_dataset, cgbench_dataset, worldsense_dataset, tamperbench_dataset,
     megabench_dataset, qbench_video_dataset, moviechat1k_dataset, vdc_dataset, video_holmes_dataset, vcrbench_dataset,
-    cg_av_counting_dataset, video_mmlu_dataset, egoexobench_dataset, dream_1k_dataset, video_tt_dataset,
+    cvbench_video_dataset, cg_av_counting_dataset, video_mmlu_dataset, egoexobench_dataset, dream_1k_dataset, video_tt_dataset,
     vsibench_dataset, aotbench_dataset, futureomni_dataset,
     charades_sta_dataset, charades_timelens_dataset, timelens_bench_dataset, perceptiontest_dataset,
     etbench_dataset,
