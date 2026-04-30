@@ -16,9 +16,9 @@ FAIL_MSG = 'Failed to obtain answer via API.'
 
 
 class TempCompass(ConcatVideoDataset):
-    def __init__(self, dataset='TempCompass', nframe=0, fps=-1):
+    def __init__(self, dataset='TempCompass', nframe=0, fps=-1, adaptive=False):
         self.DATASET_SETS[dataset] = ['TempCompass_MCQ', 'TempCompass_Captioning', 'TempCompass_YorN']
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -62,12 +62,12 @@ class TempCompass_MCQ(VideoBaseDataset):
     TYPE = 'Video-MCQ'
     DEFAULT_JUDGE = ['chatgpt-1106']
 
-    def __init__(self, dataset='TempCompass_MCQ', nframe=0, fps=-1):
+    def __init__(self, dataset='TempCompass_MCQ', nframe=0, fps=-1, adaptive=False):
         self.type_data_list = {
             'multi-choice': ('multi-choice.json', './videos', '.mp4'),
             'caption_matching': ('caption_matching.json', './videos', '.mp4'),
         }
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -160,7 +160,10 @@ class TempCompass_MCQ(VideoBaseDataset):
             'fps': vid.get_avg_fps(),
             'n_frames': len(vid),
         }
-        if self.nframe > 0 and self.fps < 0:
+        if self.adaptive:
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self.frame_paths_adaptive(line['video'], len(indices))
+        elif self.nframe > 0 and self.fps < 0:
             step_size = len(vid) / (self.nframe + 1)
             indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
             frame_paths = self.frame_paths(line['video'])
@@ -199,7 +202,7 @@ class TempCompass_MCQ(VideoBaseDataset):
         message = []
         video_path = osp.join(self.data_root, line['prefix'], line['video'] + line['suffix'])
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path, video_id=line['video']))
         else:
             img_frame_paths = self.save_video_into_images(line)
             for im in img_frame_paths:
@@ -264,11 +267,11 @@ class TempCompass_Captioning(VideoBaseDataset):
     TYPE = 'Video-VQA'
     DEFAULT_JUDGE = ['chatgpt-1106']
 
-    def __init__(self, dataset='TempCompass_Captioning', nframe=0, fps=-1):
+    def __init__(self, dataset='TempCompass_Captioning', nframe=0, fps=-1, adaptive=False):
         self.type_data_list = {
             'captioning': ('captioning.json', './videos', '.mp4'),
         }
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -362,7 +365,10 @@ class TempCompass_Captioning(VideoBaseDataset):
             'fps': vid.get_avg_fps(),
             'n_frames': len(vid),
         }
-        if self.nframe > 0 and self.fps < 0:
+        if self.adaptive:
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self.frame_paths_adaptive(line['video'], len(indices))
+        elif self.nframe > 0 and self.fps < 0:
             step_size = len(vid) / (self.nframe + 1)
             indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
             frame_paths = self.frame_paths(line['video'])
@@ -401,7 +407,7 @@ class TempCompass_Captioning(VideoBaseDataset):
         message = []
         video_path = osp.join(self.data_root, line['prefix'], line['video'] + line['suffix'])
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path, video_id=line['video']))
         else:
             img_frame_paths = self.save_video_into_images(line)
             for im in img_frame_paths:
@@ -465,11 +471,11 @@ class TempCompass_YorN(VideoBaseDataset):
     TYPE = 'Video-Y/N'
     DEFAULT_JUDGE = ['chatgpt-1106']
 
-    def __init__(self, dataset='TempCompass_YorN', nframe=0, fps=-1):
+    def __init__(self, dataset='TempCompass_YorN', nframe=0, fps=-1, adaptive=False):
         self.type_data_list = {
             'yes_no': ('yes_no.json', './videos', '.mp4'),
         }
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -561,7 +567,10 @@ class TempCompass_YorN(VideoBaseDataset):
             'fps': vid.get_avg_fps(),
             'n_frames': len(vid),
         }
-        if self.nframe > 0 and self.fps < 0:
+        if self.adaptive:
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self.frame_paths_adaptive(line['video'], len(indices))
+        elif self.nframe > 0 and self.fps < 0:
             step_size = len(vid) / (self.nframe + 1)
             indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
             frame_paths = self.frame_paths(line['video'])
@@ -600,7 +609,7 @@ class TempCompass_YorN(VideoBaseDataset):
         message = []
         video_path = osp.join(self.data_root, line['prefix'], line['video'] + line['suffix'])
         if video_llm:
-            message.append(dict(type='video', value=video_path))
+            message.append(self.make_video_struct(video_path, video_id=line['video']))
         else:
             img_frame_paths = self.save_video_into_images(line)
             for im in img_frame_paths:

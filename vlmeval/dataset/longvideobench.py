@@ -97,8 +97,8 @@ class LongVideoBench(VideoBaseDataset):
     TYPE = 'Video-MCQ'
     DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
-    def __init__(self, dataset='LongVideoBench', use_subtitle=False, nframe=0, fps=-1):
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
+    def __init__(self, dataset='LongVideoBench', use_subtitle=False, nframe=0, fps=-1, adaptive=False):
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
         self.use_subtitle = use_subtitle
         self.dataset_name = dataset
 
@@ -213,17 +213,21 @@ class LongVideoBench(VideoBaseDataset):
             'fps': vid.get_avg_fps(),
             'n_frames': len(vid),
         }
-        if self.nframe > 0 and self.fps < 0:
+        video_id = video_path[:-4]
+        if self.adaptive:
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self.frame_paths_adaptive(video_id, len(indices))
+        elif self.nframe > 0 and self.fps < 0:
             step_size = len(vid) / (self.nframe + 1)
             indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
-            frame_paths = self.frame_paths(video_path[:-4])
+            frame_paths = self.frame_paths(video_id)
         elif self.fps > 0:
             # not constrained by num_frames, get frames by fps
             total_duration = video_info['n_frames'] / video_info['fps']
             required_frames = int(total_duration * self.fps)
             step_size = video_info['fps'] / self.fps
             indices = [int(i * step_size) for i in range(required_frames)]
-            frame_paths = self.frame_paths_fps(video_path[:-4], len(indices))
+            frame_paths = self.frame_paths_fps(video_id, len(indices))
 
         # video_llm mode: frames are not needed, skip expensive decode + PNG save.
         if video_llm:
@@ -257,7 +261,7 @@ class LongVideoBench(VideoBaseDataset):
 
         message = [dict(type='text', value=self.SYS)]
         if video_llm:
-            message.append(dict(type='video', value=osp.join(self.data_root, line['video_path'])))
+            message.append(self.make_video_struct(osp.join(self.data_root, line['video_path']), video_id=line['video']))
         else:
             if not self.use_subtitle:
                 with open(osp.join(self.data_root, "subtitles", line["subtitle_path"])) as f:

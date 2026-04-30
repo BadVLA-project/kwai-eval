@@ -1,4 +1,5 @@
 import json
+import math
 import warnings
 
 from huggingface_hub import snapshot_download
@@ -48,14 +49,26 @@ class VideoMMEv2(VideoBaseDataset):
     TYPE = 'Video-MCQ'
     DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
-    def __init__(self, dataset='Video-MME-v2', use_subtitle=False,
-                 subtitle_mode='concat', reasoning=False,
-                 nframe=0, fps=-1):
-        super().__init__(dataset=dataset, nframe=nframe, fps=fps)
-        self.use_subtitle = use_subtitle
-        self.subtitle_mode = subtitle_mode
+    def __init__(self, dataset='Video-MME-v2', nframe=64, fps=-1,
+                 with_subtitle=False, subtitle_interleave=False, reasoning=False,
+                 resize_target_area=False, use_subtitle=None, subtitle_mode=None,
+                 adaptive=False):
+        if use_subtitle is not None:
+            with_subtitle = use_subtitle
+        if subtitle_mode is not None:
+            subtitle_interleave = subtitle_mode == 'interleave'
+        super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)
+        self.use_subtitle = with_subtitle
+        self.with_subtitle = with_subtitle
+        self.subtitle_interleave = subtitle_interleave
+        self.subtitle_mode = 'interleave' if subtitle_interleave else 'concat'
         self.reasoning = reasoning
+        self.response_prompt = self.FRAMES_TMPL_REASONING if reasoning else ''
+        self.resize_target_area = resize_target_area
         self.dataset_name = dataset
+        if self.resize_target_area:
+            self.frame_root_resize = self.frame_root + f'_resize{self.resize_target_area}'
+            os.makedirs(self.frame_root_resize, exist_ok=True)
 
     @classmethod
     def supported_datasets(cls):
@@ -233,16 +246,21 @@ class VideoMMEv2(VideoBaseDataset):
             'n_frames': len(vid),
         }
 
-        if self.nframe > 0 and self.fps < 0:
+        if self.adaptive:
+            indices = self.compute_adaptive_indices(vid)
+            frame_paths = self._frame_paths_adaptive_resize(video, len(indices)) if self.resize_target_area \
+                else self.frame_paths_adaptive(video, len(indices))
+        elif self.nframe > 0 and self.fps < 0:
             step_size = len(vid) / (self.nframe + 1)
             indices = [int(i * step_size) for i in range(1, self.nframe + 1)]
-            frame_paths = self.frame_paths(video)
+            frame_paths = self._frame_paths_resize(video) if self.resize_target_area else self.frame_paths(video)
         elif self.fps > 0:
             total_duration = video_info['n_frames'] / video_info['fps']
             required_frames = int(total_duration * self.fps)
             step_size = video_info['fps'] / self.fps
             indices = [int(i * step_size) for i in range(required_frames)]
-            frame_paths = self.frame_paths_fps(video, len(indices))
+            frame_paths = self._frame_paths_fps_resize(video, len(indices)) if self.resize_target_area \
+                else self.frame_paths_fps(video, len(indices))
 
         # video_llm mode: frames are not needed, skip expensive decode + PNG save.
         if video_llm:
@@ -256,11 +274,55 @@ class VideoMMEv2(VideoBaseDataset):
                 if not np.all([osp.exists(p) for p in frame_paths]):
                     images = [vid[i].asnumpy() for i in indices]
                     images = [Image.fromarray(arr) for arr in images]
+                    if self.resize_target_area:
+                        images = [self._resize_to_target_area(im, self.resize_target_area) for im in images]
                     for im, pth in zip(images, frame_paths):
                         if not osp.exists(pth):
                             im.save(pth)
 
         return frame_paths, indices, video_info
+
+    @staticmethod
+    def _resize_to_target_area(img, target_area, divisor=16):
+        """Resize a PIL image keeping aspect ratio and divisor-aligned dimensions."""
+        w, h = img.size
+        scale = math.sqrt(target_area / (w * h))
+        new_w = max(divisor, round(w * scale / divisor) * divisor)
+        new_h = max(divisor, round(h * scale / divisor) * divisor)
+        if new_w == w and new_h == h:
+            return img
+        return img.resize((new_w, new_h), Image.LANCZOS)
+
+    def _frame_paths_resize(self, video):
+        frame_root = osp.join(self.frame_root_resize, video)
+        os.makedirs(frame_root, exist_ok=True)
+        return [osp.join(frame_root, self.frame_tmpl.format(i, self.nframe)) for i in range(1, self.nframe + 1)]
+
+    def _frame_paths_fps_resize(self, video, num_frames):
+        frame_root = osp.join(self.frame_root_resize, video)
+        os.makedirs(frame_root, exist_ok=True)
+        return [
+            osp.join(frame_root, self.frame_tmpl_fps.format(i, num_frames, self.fps))
+            for i in range(1, num_frames + 1)
+        ]
+
+    def _frame_paths_adaptive_resize(self, video, num_frames):
+        frame_root = osp.join(self.frame_root_resize, video)
+        os.makedirs(frame_root, exist_ok=True)
+        return [
+            osp.join(frame_root, self.frame_tmpl_adaptive.format(i, num_frames))
+            for i in range(1, num_frames + 1)
+        ]
+
+    @staticmethod
+    def _resize_kwargs_for_video(video_path, target_area=448 * 448, divisor=16):
+        import decord
+        vid = decord.VideoReader(video_path)
+        h, w = vid[0].shape[:2]
+        scale = math.sqrt(target_area / (w * h))
+        new_w = max(divisor, round(w * scale / divisor) * divisor)
+        new_h = max(divisor, round(h * scale / divisor) * divisor)
+        return dict(resized_height=new_h, resized_width=new_w)
 
     @staticmethod
     def _load_subtitle_jsonl(subtitle_path):
@@ -361,8 +423,16 @@ class VideoMMEv2(VideoBaseDataset):
         message = [dict(type='text', value=self.SYS)]
 
         if video_llm:
-            message.append(dict(type='video',
-                                value=resolve_videommev2_video_path(self.data_root, line['video'])))
+            video_path = resolve_videommev2_video_path(self.data_root, line['video'])
+            video_msg = self.make_video_struct(video_path, video_id=line['video'])
+            target_area = self.resize_target_area or 448 * 448
+            video_msg.update(self._resize_kwargs_for_video(video_path, target_area=target_area))
+            if not self.adaptive:
+                if self.nframe > 0:
+                    video_msg['nframes'] = self.nframe
+                if self.fps > 0:
+                    video_msg['fps'] = self.fps
+            message.append(video_msg)
         else:
             if self.use_subtitle and self.subtitle_mode == 'interleave' and sub_entries:
                 interleaved = self._build_subtitle_interleave(
@@ -376,7 +446,7 @@ class VideoMMEv2(VideoBaseDataset):
         if self.reasoning:
             text_prompt = self.FRAMES_TMPL_REASONING
         elif self.use_subtitle and sub_entries:
-            if self.subtitle_mode == 'interleave' and not video_llm:
+            if self.subtitle_interleave and not video_llm:
                 text_prompt = self.FRAMES_TMPL_INTERLEAVE
             else:
                 full_text = self._build_subtitle_concat(sub_entries)

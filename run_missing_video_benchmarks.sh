@@ -5,8 +5,10 @@
 # Supported here:
 #   - VCRBench
 #   - CVBench cross-video reasoning
+#   - Video-MME-v2
+#   - VideoMMMU
 #   - LongVideoBench
-#   - TempCompass
+#   - TempCompass MCQ
 # ==========================================================================
 set -euo pipefail
 set -x
@@ -76,10 +78,12 @@ if [ -n "${DATA:-}" ]; then
   read -ra DATASETS <<< "${DATA}"
 else
   DATASETS=(
-    VCRBench_64frame_nopack
-    CVBench_64frame
-    TempCompass_64frame
-    LongVideoBench_64frame
+    VCRBench_adaptive
+    CVBench_adaptive
+    Video-MME-v2_adaptive
+    VideoMMMU_adaptive
+    LongVideoBench_adaptive
+    TempCompass_MCQ_adaptive
   )
 fi
 

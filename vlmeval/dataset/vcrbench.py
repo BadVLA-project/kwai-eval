@@ -36,8 +36,8 @@ Please analyze these images and provide the answer to the question about the vid
 
     TYPE = 'Video-VQA'
 
-    def __init__(self, dataset='VCR-Bench', pack=False, nframe=0, fps=-1):
-        super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps)
+    def __init__(self, dataset='VCR-Bench', pack=False, nframe=0, fps=-1, adaptive=False):
+        super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps, adaptive=adaptive)
 
     @classmethod
     def supported_datasets(cls):
@@ -75,12 +75,8 @@ Please analyze these images and provide the answer to the question about the vid
             question = line['question']
             prefix, video_idx_path = os.path.split(line['video_path'])
             message = [dict(type='text', value=question)]
-            message.append(
-                dict(
-                    type='video',
-                    value=os.path.join(self.video_path, os.path.join(prefix, video_idx_path))
-                )
-            )
+            video_path = os.path.join(self.video_path, os.path.join(prefix, video_idx_path))
+            message.append(self.make_video_struct(video_path, video_id=line['video']))
             return message
         else:
             frames = self.save_video_frames(line['video'])

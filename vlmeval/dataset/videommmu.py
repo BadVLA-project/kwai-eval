@@ -636,9 +636,7 @@ class VideoMMMU(VideoBaseDataset):
 
         message = []
         if video_llm:
-            message.append(
-                dict(type='video',
-                     value=osp.join(self.data_root, line['video'])))
+            message.append(self.make_video_struct(osp.join(self.data_root, line['video']), video_id=line['id']))
         else:
             message.extend(dict(type='image', value=im) for im in frames)
 

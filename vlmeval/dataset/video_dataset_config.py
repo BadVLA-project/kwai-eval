@@ -51,15 +51,39 @@ videomme_dataset = {
     'Video-MME_0.5fps_subs': partial(VideoMME, dataset='Video-MME', fps=0.5, use_subtitle=True),
 }
 
-videomme_v2_dataset = {
+videommev2_dataset = {
+    # ── No subtitle ──
     'Video-MME-v2_64frame': partial(VideoMMEv2, dataset='Video-MME-v2', nframe=64),
     'Video-MME-v2_1fps': partial(VideoMMEv2, dataset='Video-MME-v2', fps=1.0),
-    'Video-MME-v2_0.5fps': partial(VideoMMEv2, dataset='Video-MME-v2', fps=0.5),
-    'Video-MME-v2_64frame_subs': partial(VideoMMEv2, dataset='Video-MME-v2', nframe=64, use_subtitle=True),
-    'Video-MME-v2_0.5fps_subs': partial(VideoMMEv2, dataset='Video-MME-v2', fps=0.5, use_subtitle=True),
+    # ── Subtitle (non-interleave, concatenated as text block) ──
+    'Video-MME-v2_64frame_subs': partial(VideoMMEv2, dataset='Video-MME-v2', nframe=64, with_subtitle=True),
+    'Video-MME-v2_1fps_subs': partial(VideoMMEv2, dataset='Video-MME-v2', fps=1.0, with_subtitle=True),
+    # ── Subtitle (interleave, timestamp-aligned between frames) ──
     'Video-MME-v2_64frame_subs_interleave': partial(
-        VideoMMEv2, dataset='Video-MME-v2', nframe=64, use_subtitle=True, subtitle_mode='interleave'),
+        VideoMMEv2, dataset='Video-MME-v2', nframe=64, with_subtitle=True, subtitle_interleave=True),
+    'Video-MME-v2_1fps_subs_interleave': partial(
+        VideoMMEv2, dataset='Video-MME-v2', fps=1.0, with_subtitle=True, subtitle_interleave=True),
+    # ── Reasoning ──
+    'Video-MME-v2_64frame_reasoning': partial(VideoMMEv2, dataset='Video-MME-v2', nframe=64, reasoning=True),
+    'Video-MME-v2_64frame_reasoning_subs': partial(
+        VideoMMEv2, dataset='Video-MME-v2', nframe=64, reasoning=True, with_subtitle=True),
+    'Video-MME-v2_64frame_reasoning_subs_interleave': partial(
+        VideoMMEv2, dataset='Video-MME-v2', nframe=64,
+        reasoning=True, with_subtitle=True, subtitle_interleave=True),
+    # ── Resize ──
+    'Video-MME-v2_64frame_resize': partial(
+        VideoMMEv2, dataset='Video-MME-v2', nframe=64, resize_target_area=448 * 448),
+    'Video-MME-v2_1fps_resize': partial(
+        VideoMMEv2, dataset='Video-MME-v2', fps=1.0, resize_target_area=448 * 448),
+    'Video-MME-v2_64frame_resize_subs': partial(
+        VideoMMEv2, dataset='Video-MME-v2', nframe=64, resize_target_area=448 * 448, with_subtitle=True),
+    'Video-MME-v2_64frame_resize_subs_interleave': partial(
+        VideoMMEv2, dataset='Video-MME-v2', nframe=64,
+        resize_target_area=448 * 448, with_subtitle=True, subtitle_interleave=True),
+    'Video-MME-v2_64frame_resize_reasoning': partial(
+        VideoMMEv2, dataset='Video-MME-v2', nframe=64, resize_target_area=448 * 448, reasoning=True),
 }
+videomme_v2_dataset = videommev2_dataset
 
 videommmu_dataset = {
     'VideoMMMU_8frame': partial(VideoMMMU, dataset='VideoMMMU', nframe=8),
@@ -365,6 +389,9 @@ adaptive_dataset = {
     ),
     # MVBench_MP4
     'MVBench_MP4_adaptive': partial(MVBench_MP4, dataset='MVBench_MP4', adaptive=True),
+    # VCRBench / CVBench
+    'VCRBench_adaptive': partial(VCRBench, dataset='VCR-Bench', adaptive=True, pack=False),
+    'CVBench_adaptive': partial(CVBenchVideo, dataset='CVBench', adaptive=True),
     # ETBench
     'ETBench_adaptive': partial(ETBench, dataset='ETBench', adaptive=True),
     'ETBench_adaptive_compressed': partial(ETBench, dataset='ETBench', adaptive=True, video_source='compressed'),
@@ -374,6 +401,13 @@ adaptive_dataset = {
     # Video-MME
     'Video-MME_adaptive': partial(VideoMME, dataset='Video-MME', adaptive=True),
     'Video-MME_adaptive_subs': partial(VideoMME, dataset='Video-MME', adaptive=True, use_subtitle=True),
+    # Video-MME-v2 / VideoMMMU / LongVideoBench
+    'Video-MME-v2_adaptive': partial(VideoMMEv2, dataset='Video-MME-v2', adaptive=True),
+    'Video-MME-v2_adaptive_subs': partial(VideoMMEv2, dataset='Video-MME-v2', adaptive=True, with_subtitle=True),
+    'VideoMMMU_adaptive': partial(VideoMMMU, dataset='VideoMMMU', adaptive=True),
+    'LongVideoBench_adaptive': partial(LongVideoBench, dataset='LongVideoBench', adaptive=True),
+    'LongVideoBench_adaptive_subs': partial(
+        LongVideoBench, dataset='LongVideoBench', adaptive=True, use_subtitle=True),
     # Video_Holmes
     'Video_Holmes_adaptive': partial(Video_Holmes, dataset='Video_Holmes', adaptive=True),
     # FutureOmni
@@ -408,6 +442,8 @@ adaptive_dataset = {
     ),
     # MLVU
     'MLVU_MCQ_adaptive': partial(MLVU_MCQ, dataset='MLVU_MCQ', adaptive=True),
+    # TempCompass MCQ-only; the full TempCompass aggregate includes Captioning, which needs an LLM judge.
+    'TempCompass_MCQ_adaptive': partial(TempCompass_MCQ, dataset='TempCompass_MCQ', adaptive=True),
     # DREAM-1K
     'DREAM-1K_adaptive': partial(DREAM, dataset='DREAM-1K', adaptive=True),
     'DREAM_local_adaptive': partial(
@@ -419,7 +455,7 @@ adaptive_dataset = {
 }
 
 dataset_groups = [
-    mmbench_video_dataset, mvbench_dataset, videomme_dataset, videomme_v2_dataset, videommmu_dataset, longvideobench_dataset,
+    mmbench_video_dataset, mvbench_dataset, videomme_dataset, videommev2_dataset, videommmu_dataset, longvideobench_dataset,
     mlvu_dataset, tempcompass_dataset, cgbench_dataset, worldsense_dataset, tamperbench_dataset,
     megabench_dataset, qbench_video_dataset, moviechat1k_dataset, vdc_dataset, video_holmes_dataset, vcrbench_dataset,
     cvbench_video_dataset, cg_av_counting_dataset, video_mmlu_dataset, egoexobench_dataset, dream_1k_dataset, video_tt_dataset,

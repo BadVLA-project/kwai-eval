@@ -37,7 +37,7 @@ from .simplevqa import SimpleVQA
 
 from .mmbench_video import MMBenchVideo
 from .videomme import VideoMME
-from .videomme_v2 import VideoMMEv2
+from .videommev2 import VideoMMEv2
 from .video_holmes import Video_Holmes
 from .mvbench import MVBench, MVBench_MP4
 from .tamperbench import MVTamperBench
