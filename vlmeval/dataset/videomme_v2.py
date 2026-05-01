@@ -239,9 +239,13 @@ class VideoMMEv2(VideoBaseDataset):
 
         return dict(data_file=data_file, root=dataset_path)
 
+    @staticmethod
+    def _is_video_record(value):
+        return hasattr(value, 'get') and not isinstance(value, str)
+
     def save_video_frames(self, video, video_llm=False):
-        video = str(video)
-        vid_path = resolve_videommev2_video_path(self.data_root, video)
+        vid_path = self._resolve_video_path(video)
+        video = str(video.get('video') if self._is_video_record(video) else video)
         import decord
         vid = decord.VideoReader(vid_path)
         video_info = {
@@ -284,6 +288,16 @@ class VideoMMEv2(VideoBaseDataset):
                             im.save(pth)
 
         return frame_paths, indices, video_info
+
+    def _resolve_video_path(self, line_or_video):
+        if self._is_video_record(line_or_video):
+            video_path = line_or_video.get('video_path')
+            if isinstance(video_path, str) and video_path and video_path.lower() != 'nan':
+                if video_path.startswith('./'):
+                    video_path = video_path[2:]
+                return video_path if osp.isabs(video_path) else osp.join(self.data_root, video_path)
+            return resolve_videommev2_video_path(self.data_root, line_or_video['video'])
+        return resolve_videommev2_video_path(self.data_root, line_or_video)
 
     @staticmethod
     def _resize_to_target_area(img, target_area, divisor=16):
@@ -441,7 +455,7 @@ class VideoMMEv2(VideoBaseDataset):
             assert line < len(self)
             line = self.data.iloc[line]
 
-        frames, indices, video_info = self.save_video_frames(line['video'], video_llm)
+        frames, indices, video_info = self.save_video_frames(line, video_llm)
 
         # Load subtitles if needed
         sub_entries = None
@@ -457,7 +471,7 @@ class VideoMMEv2(VideoBaseDataset):
         message = [dict(type='text', value=self.SYS)]
 
         if video_llm:
-            video_path = resolve_videommev2_video_path(self.data_root, line['video'])
+            video_path = self._resolve_video_path(line)
             video_msg = self.make_video_struct(video_path, video_id=line['video'])
             target_area = self.resize_target_area or 448 * 448
             video_msg.update(self._resize_kwargs_for_video(video_path, target_area=target_area))

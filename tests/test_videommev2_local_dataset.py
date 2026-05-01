@@ -203,3 +203,57 @@ def test_videommev2_parse_options_handles_numpy_string_reprs(monkeypatch):
         'red object',
         'blue object',
     ]
+
+
+def test_build_prompt_prefers_video_path_when_video_id_loses_padding(tmp_path, monkeypatch):
+    cls = load_videommev2_class(monkeypatch)
+    opened = []
+
+    class FakeVideo:
+        def __len__(self):
+            return 1
+
+        def get_avg_fps(self):
+            return 30.0
+
+    def fake_video_reader(path):
+        opened.append(path)
+        return FakeVideo()
+
+    monkeypatch.setitem(
+        sys.modules,
+        'decord',
+        types.SimpleNamespace(VideoReader=fake_video_reader),
+    )
+
+    dataset = object.__new__(cls)
+    dataset.data_root = str(tmp_path)
+    dataset.frame_root = str(tmp_path / 'frames')
+    dataset.frame_tmpl_adaptive = 'frame-{}-of-{}-adaptive.jpg'
+    dataset.adaptive = True
+    dataset.nframe = 0
+    dataset.fps = -1
+    dataset.resize_target_area = False
+    dataset.use_subtitle = False
+    dataset.reasoning = False
+    dataset.SYS = ''
+
+    video_path = tmp_path / 'videos' / '098.mp4'
+    video_path.parent.mkdir(parents=True)
+    video_path.write_bytes(b'video')
+
+    frame_path = tmp_path / 'frames' / '98' / 'frame-1-of-1-adaptive.jpg'
+    frame_path.parent.mkdir(parents=True)
+    frame_path.write_bytes(b'cached frame')
+
+    dataset.build_prompt(
+        {
+            'video': np.int64(98),
+            'video_path': './videos/098.mp4',
+            'question': 'What happens?',
+            'options': "['one', 'two', 'three', 'four']",
+        },
+        video_llm=False,
+    )
+
+    assert opened == [str(video_path)]

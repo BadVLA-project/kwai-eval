@@ -88,7 +88,7 @@ def test_video_llm_prompt_paths_use_adaptive_video_structs():
 
     videomme_v2 = _source('vlmeval/dataset/videomme_v2.py')
     assert 'self.make_video_struct(' in videomme_v2
-    assert 'resolve_videommev2_video_path(self.data_root, line[\'video\'])' in videomme_v2
+    assert 'self._resolve_video_path(line)' in videomme_v2
 
 
 def test_missing_video_launcher_defaults_to_adaptive_mcq_only_tempcompass():
