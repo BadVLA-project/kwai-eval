@@ -3,6 +3,7 @@ from ..smp import *
 from ..smp.file import get_intermediate_file_path, get_file_extension
 from .video_base import VideoBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
+from .vcrbench_utils import resolve_vcrbench_dir
 from ..utils import track_progress_rich
 
 
@@ -45,15 +46,22 @@ Please analyze these images and provide the answer to the question about the vid
 
     def prepare_dataset(self, dataset_name='VCR-Bench', repo_id='VLM-Reasoning/VCR-Bench'):
         def check_integrity(pth):
+            if pth is None:
+                return False
             data_file = osp.join(pth, f'{dataset_name}.tsv')
+            if not osp.exists(data_file):
+                return False
             data = load(data_file)
             for video_pth in data['video_path']:
                 if not osp.exists(osp.join(pth, video_pth)):
                     return False
             return True
 
-        cache_path = get_cache_path(repo_id)
-        if cache_path is not None and check_integrity(cache_path):
+        local_path = resolve_vcrbench_dir(dataset_name=dataset_name)
+        cache_path = get_cache_path(repo_id) if local_path is None else None
+        if check_integrity(local_path):
+            dataset_path = local_path
+        elif check_integrity(cache_path):
             dataset_path = cache_path
         else:
             if modelscope_flag_set():

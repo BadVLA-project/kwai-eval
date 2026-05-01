@@ -48,3 +48,15 @@ def test_tempcompass_resolves_hf_cache_repo_root_snapshot(tmp_path):
     assert utils.resolve_tempcompass_dir(
         env={'TEMPCOMPASS_DIR': str(repo_root)}
     ) == str(snapshot)
+
+
+def test_vcrbench_resolves_hf_cache_repo_root_snapshot(tmp_path):
+    utils = load_module('vcrbench_utils')
+    repo_root = tmp_path / 'datasets--VLM-Reasoning--VCR-Bench'
+    snapshot = repo_root / 'snapshots' / 'abc123'
+    (snapshot / 'v1' / 'videos' / 'video').mkdir(parents=True)
+    (snapshot / 'VCR-Bench.tsv').write_text('index\tvideo\tvideo_path\tquestion\n', encoding='utf-8')
+
+    assert utils.resolve_vcrbench_dir(
+        env={'VCRBENCH_DIR': str(repo_root)}
+    ) == str(snapshot)
