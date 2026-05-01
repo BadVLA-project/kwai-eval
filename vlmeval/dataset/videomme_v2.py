@@ -1,5 +1,7 @@
+import ast
 import json
 import math
+import re
 import warnings
 
 from huggingface_hub import snapshot_download
@@ -379,6 +381,37 @@ class VideoMMEv2(VideoBaseDataset):
             return ''
         return ' '.join(e['text'] for e in entries)
 
+    @staticmethod
+    def _parse_options(options):
+        if not isinstance(options, str):
+            return list(options)
+
+        def clean_option(option):
+            option = str(option).strip().strip('"').strip("'")
+            if option.startswith('np.str_(') and option.endswith(')'):
+                option = option[len('np.str_('):-1].strip().strip('"').strip("'")
+            return option
+
+        text = options.strip()
+        adjacent_quoted = re.search(r'''["'][^"']+["']\s+["']''', text)
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                parsed = parser(text)
+            except Exception:
+                continue
+            if isinstance(parsed, (list, tuple)) and not (len(parsed) == 1 and adjacent_quoted):
+                return [clean_option(opt) for opt in parsed]
+
+        if text.startswith('[') and text.endswith(']'):
+            text = text[1:-1]
+        quoted_options = re.findall(r'''["']([^"']+)["']''', text)
+        if len(quoted_options) > 1:
+            return [clean_option(opt) for opt in quoted_options]
+        np_options = re.findall(r'''np\.str_\(["']([^"']+)["']\)''', text)
+        if np_options:
+            return [clean_option(opt) for opt in np_options]
+        return [clean_option(opt) for opt in text.split(',') if opt.strip()]
+
     def _build_subtitle_interleave(self, entries, frame_paths, indices, video_info):
         """Build interleaved frame + subtitle message list."""
         segments = self._group_subtitle_segments(entries)
@@ -458,7 +491,7 @@ class VideoMMEv2(VideoBaseDataset):
         message.append(dict(type='text', value=text_prompt))
 
         # Build question with 8 options (A-H)
-        options = eval(line['options']) if isinstance(line['options'], str) else list(line['options'])
+        options = self._parse_options(line['options'])
         option_lines = [f'{chr(ord("A") + i)}. {opt}' for i, opt in enumerate(options)]
         question_text = str(line['question']) + '\n' + '\n'.join(option_lines)
         prompt = f'Question: {question_text}\nAnswer: '

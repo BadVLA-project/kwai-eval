@@ -144,3 +144,62 @@ def test_build_prompt_accepts_numeric_video_ids_from_tsv(tmp_path, monkeypatch):
 
     image_values = [part['value'] for part in message if part['type'] == 'image']
     assert image_values == [str(frame_path)]
+
+
+def test_build_prompt_accepts_loose_option_strings(tmp_path, monkeypatch):
+    cls = load_videommev2_class(monkeypatch)
+
+    class FakeVideo:
+        def __len__(self):
+            return 1
+
+        def get_avg_fps(self):
+            return 30.0
+
+    monkeypatch.setitem(
+        sys.modules,
+        'decord',
+        types.SimpleNamespace(VideoReader=lambda path: FakeVideo()),
+    )
+
+    dataset = object.__new__(cls)
+    dataset.data_root = str(tmp_path)
+    dataset.frame_root = str(tmp_path / 'frames')
+    dataset.frame_tmpl_adaptive = 'frame-{}-of-{}-adaptive.jpg'
+    dataset.adaptive = True
+    dataset.nframe = 0
+    dataset.fps = -1
+    dataset.resize_target_area = False
+    dataset.use_subtitle = False
+    dataset.reasoning = False
+    dataset.SYS = ''
+
+    frame_path = tmp_path / 'frames' / '436' / 'frame-1-of-1-adaptive.jpg'
+    frame_path.parent.mkdir(parents=True)
+    frame_path.write_bytes(b'cached frame')
+
+    message = dataset.build_prompt(
+        {
+            'video': np.int64(436),
+            'question': 'What is shown?',
+            'options': '[red object, blue object, green object, yellow object]',
+        },
+        video_llm=False,
+    )
+
+    question_texts = [part['value'] for part in message if part['type'] == 'text']
+    assert any('A. red object' in text for text in question_texts)
+    assert any('D. yellow object' in text for text in question_texts)
+
+
+def test_videommev2_parse_options_handles_numpy_string_reprs(monkeypatch):
+    cls = load_videommev2_class(monkeypatch)
+
+    assert cls._parse_options("[np.str_('red object'), np.str_('blue object')]") == [
+        'red object',
+        'blue object',
+    ]
+    assert cls._parse_options("['red object' 'blue object']") == [
+        'red object',
+        'blue object',
+    ]
