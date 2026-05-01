@@ -238,6 +238,7 @@ class VideoMMEv2(VideoBaseDataset):
         return dict(data_file=data_file, root=dataset_path)
 
     def save_video_frames(self, video, video_llm=False):
+        video = str(video)
         vid_path = resolve_videommev2_video_path(self.data_root, video)
         import decord
         vid = decord.VideoReader(vid_path)
