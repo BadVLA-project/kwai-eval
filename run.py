@@ -643,18 +643,43 @@ def main():
                             f'Can not evaluate {dataset_name} on non-official servers, will skip the evaluation.')
                         continue
 
-                    # Setup the proxy for the evaluation
-                    eval_proxy = os.environ.get('EVAL_PROXY', None)
-                    old_proxy = os.environ.get('HTTP_PROXY', '')
-                    if eval_proxy is not None:
-                        proxy_set(eval_proxy)
+                    eval_results, cached_eval_path = find_cached_eval_result(
+                        result_file,
+                        dataset_name=dataset_name,
+                        judge_model=judge_kwargs.get('model'),
+                    )
+                    eval_results_from_cache = cached_eval_path is not None
+                    if eval_results_from_cache:
+                        logger.info(
+                            f'Found cached evaluation result for model {model_name} x '
+                            f'dataset {dataset_name}: {cached_eval_path}. '
+                            'Skipping dataset.evaluate().'
+                        )
+                    else:
+                        # Setup the proxy for the evaluation
+                        eval_proxy = os.environ.get('EVAL_PROXY', None)
+                        old_proxy = os.environ.get('HTTP_PROXY', '')
+                        if eval_proxy is not None:
+                            proxy_set(eval_proxy)
 
-                    # Perform the Evaluation
-                    eval_results = dataset.evaluate(result_file, **judge_kwargs)
+                        # Perform the Evaluation
+                        try:
+                            eval_results = dataset.evaluate(result_file, **judge_kwargs)
+                        finally:
+                            # Restore the proxy
+                            if eval_proxy is not None:
+                                proxy_set(old_proxy)
+
                     # Display Evaluation Results in Terminal
                     if eval_results is not None:
                         assert isinstance(eval_results, dict) or isinstance(eval_results, pd.DataFrame)
-                        logger.info(f'The evaluation of model {model_name} x dataset {dataset_name} has finished! ')
+                        if eval_results_from_cache:
+                            logger.info(
+                                f'The evaluation of model {model_name} x dataset {dataset_name} '
+                                'was loaded from cache.'
+                            )
+                        else:
+                            logger.info(f'The evaluation of model {model_name} x dataset {dataset_name} has finished! ')
                         logger.info('Evaluation Results:')
                         if isinstance(eval_results, dict):
                             logger.info('\n' + json.dumps(eval_results, indent=4))
@@ -666,10 +691,6 @@ def main():
                             if len(eval_results) < len(eval_results.columns):
                                 eval_results = eval_results.T
                             logger.info('\n' + tabulate(eval_results))
-
-                    # Restore the proxy
-                    if eval_proxy is not None:
-                        proxy_set(old_proxy)
 
                     # Create the symbolic links for the prediction files
                     files = os.listdir(pred_root)

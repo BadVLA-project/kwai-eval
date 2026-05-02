@@ -119,6 +119,7 @@ class CVBenchVideo(VideoBaseDataset):
         env_root = os.environ.get('CVBENCH_VIDEO_DIR', '').strip()
         candidates = [
             env_root,
+            osp.join(data_root, 'Video-R1', 'src', 'r1-v', 'Evaluation', 'CVBench'),
             osp.join(data_root, 'CVBench'),
             osp.join(data_root, 'videos'),
             data_root,

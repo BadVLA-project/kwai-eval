@@ -4,6 +4,7 @@ import warnings
 import pandas as pd
 import os
 import csv
+import glob
 import hashlib
 import os.path as osp
 import time
@@ -494,6 +495,96 @@ def get_intermediate_file_path(eval_file, suffix, target_format=None):
             target_format = get_pred_file_format()
 
     return eval_file.replace(f'.{original_ext}', f'{suffix}.{target_format}')
+
+
+def _append_unique(paths, path):
+    if path not in paths:
+        paths.append(path)
+
+
+def get_eval_cache_candidates(eval_file, dataset_name=None, judge_model=None):
+    """Return plausible completed evaluation artifacts for a prediction file."""
+    root, original_ext = osp.splitext(eval_file)
+    paths = []
+
+    # run.py persists dict-shaped evaluation summaries here.
+    _append_unique(paths, f'{root}_score.json')
+
+    for suffix, fmt in [
+        ('_rating', 'json'),
+        ('_acc', 'csv'),
+        ('_acc', 'json'),
+        ('_score', 'json'),
+        ('_score', 'csv'),
+        ('_score', 'xlsx'),
+    ]:
+        _append_unique(paths, eval_file.replace(original_ext, f'{suffix}.{fmt}'))
+
+    if judge_model:
+        for suffix, fmt in [
+            (f'_{judge_model}_rating', 'json'),
+            (f'_{judge_model}_score', 'json'),
+            (f'_{judge_model}_score', 'csv'),
+            (f'_{judge_model}_score', 'xlsx'),
+        ]:
+            _append_unique(paths, eval_file.replace(original_ext, f'{suffix}.{fmt}'))
+
+    # ETBench writes a compact metric table with this dataset-specific suffix.
+    if dataset_name and 'etbench' in str(dataset_name).lower():
+        for fmt in ['csv', 'json']:
+            _append_unique(paths, eval_file.replace(original_ext, f'_etbench_acc.{fmt}'))
+
+    for pattern in [
+        f'{root}_*rating.json',
+        f'{root}_*acc.csv',
+        f'{root}_*acc.json',
+        f'{root}_*score.json',
+        f'{root}_*score.csv',
+        f'{root}_*score.xlsx',
+    ]:
+        for path in sorted(glob.glob(pattern)):
+            _append_unique(paths, path)
+
+    return paths
+
+
+def _is_fresh_eval_cache(cache_file, eval_file):
+    if not osp.exists(cache_file) or not osp.isfile(cache_file):
+        return False
+    if osp.getsize(cache_file) <= 0:
+        return False
+    if osp.exists(eval_file) and osp.getmtime(cache_file) + 1e-6 < osp.getmtime(eval_file):
+        return False
+    return True
+
+
+def _has_cached_payload(data):
+    if data is None:
+        return False
+    if isinstance(data, pd.DataFrame):
+        return not data.empty
+    if isinstance(data, (dict, list, tuple, set)):
+        return len(data) > 0
+    return True
+
+
+def find_cached_eval_result(eval_file, dataset_name=None, judge_model=None):
+    """Load an existing evaluation result if it is fresh relative to predictions.
+
+    Returns ``(result, path)``. If no reusable result exists, returns
+    ``(None, None)``.
+    """
+    for cache_file in get_eval_cache_candidates(eval_file, dataset_name, judge_model):
+        if not _is_fresh_eval_cache(cache_file, eval_file):
+            continue
+        try:
+            data = load(cache_file)
+        except Exception as err:
+            warnings.warn(f'Failed to load cached evaluation file {cache_file}: {type(err).__name__}: {err}')
+            continue
+        if _has_cached_payload(data):
+            return data, cache_file
+    return None, None
 
 
 def prepare_reuse_files(pred_root_meta, eval_id, model_name, dataset_name, reuse, reuse_aux):
