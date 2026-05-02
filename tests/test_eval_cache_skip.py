@@ -75,3 +75,12 @@ def test_run_py_checks_eval_cache_before_evaluating():
     evaluate_call = script.index('dataset.evaluate(result_file')
 
     assert cache_check < evaluate_call
+
+
+def test_run_py_can_skip_fresh_eval_cache_before_dataset_build():
+    script = (ROOT / 'run.py').read_text(encoding='utf-8')
+
+    prebuild_cache_check = script.index('prebuild_cached_eval_path')
+    dataset_build = script.index('if use_config:', script.index('for _, dataset_name in enumerate(args.data):'))
+
+    assert prebuild_cache_check < dataset_build

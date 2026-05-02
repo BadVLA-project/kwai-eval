@@ -22,6 +22,16 @@ def load_videommev2_utils():
 
 
 def load_videommev2_class(monkeypatch):
+    class NoopLock:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
     vlmeval_pkg = types.ModuleType('vlmeval')
     vlmeval_pkg.__path__ = [str(ROOT / 'vlmeval')]
     dataset_pkg = types.ModuleType('vlmeval.dataset')
@@ -32,6 +42,7 @@ def load_videommev2_class(monkeypatch):
     smp_stub.osp = osp
     smp_stub.np = np
     smp_stub.pd = pd
+    smp_stub.portalocker = types.SimpleNamespace(Lock=NoopLock)
     smp_stub.logging = logging
     smp_stub.LMUDataRoot = lambda: ''
     smp_stub.get_cache_path = lambda repo_id: None
@@ -99,6 +110,84 @@ def test_videommev2_video_path_prefers_videos_layout(tmp_path):
 
     assert utils.resolve_videommev2_video_path(str(source), 'abc') == str(videos / 'abc.mp4')
     assert utils.videommev2_video_relpath(str(source), 'abc') == './videos/abc.mp4'
+
+
+def test_prepare_dataset_reuses_existing_local_tsv_without_rewriting(tmp_path, monkeypatch):
+    cls = load_videommev2_class(monkeypatch)
+
+    source = tmp_path / 'Video-MME-v2-source'
+    artifact = tmp_path / 'Video-MME-v2-artifacts'
+    source.mkdir()
+    artifact.mkdir()
+    (source / 'test.parquet').write_bytes(b'parquet')
+    (source / 'videos').mkdir()
+    (source / 'videos' / '001.mp4').write_bytes(b'video')
+
+    existing_tsv = artifact / 'Video-MME-v2.tsv'
+    existing_tsv.write_text(
+        'index\tvideo\tvideo_path\tquestion\toptions\tanswer\n'
+        "0\t001\t./videos/001.mp4\tQuestion?\t['A', 'B']\tA\n",
+        encoding='utf-8',
+    )
+    before = existing_tsv.read_text(encoding='utf-8')
+
+    monkeypatch.setenv('VIDEO_MME_V2_DIR', str(source))
+    monkeypatch.setenv('VIDEO_MME_V2_ARTIFACT_DIR', str(artifact))
+
+    def fail_if_rewritten(*_args, **_kwargs):
+        raise AssertionError('existing Video-MME-v2.tsv should not be regenerated')
+
+    monkeypatch.setattr(cls.prepare_dataset.__globals__['pd'], 'read_parquet', fail_if_rewritten)
+
+    dataset = object.__new__(cls)
+    ret = dataset.prepare_dataset('Video-MME-v2')
+
+    assert ret == {'data_file': str(existing_tsv), 'root': str(source)}
+    assert existing_tsv.read_text(encoding='utf-8') == before
+
+
+def test_prepare_dataset_regenerates_corrupt_local_tsv(tmp_path, monkeypatch):
+    cls = load_videommev2_class(monkeypatch)
+
+    source = tmp_path / 'Video-MME-v2-source'
+    artifact = tmp_path / 'Video-MME-v2-artifacts'
+    source.mkdir()
+    artifact.mkdir()
+    (source / 'test.parquet').write_bytes(b'parquet')
+    (source / 'videos').mkdir()
+    (source / 'videos' / '001.mp4').write_bytes(b'video')
+
+    existing_tsv = artifact / 'Video-MME-v2.tsv'
+    existing_tsv.write_text(
+        'index\tvideo\tvideo_path\tquestion\toptions\tanswer\n'
+        '0\t001\t./videos/001.mp4\t"unterminated question\t["A", "B"]\tA\n',
+        encoding='utf-8',
+    )
+
+    monkeypatch.setenv('VIDEO_MME_V2_DIR', str(source))
+    monkeypatch.setenv('VIDEO_MME_V2_ARTIFACT_DIR', str(artifact))
+
+    def fake_read_parquet(_path):
+        return pd.DataFrame({
+            'video_id': ['001'],
+            'question': ['Question?'],
+            'options': [['A', 'B']],
+            'answer': ['A'],
+            'level': ['easy'],
+        })
+
+    monkeypatch.setattr(cls.prepare_dataset.__globals__['pd'], 'read_parquet', fake_read_parquet)
+
+    dataset = object.__new__(cls)
+    ret = dataset.prepare_dataset('Video-MME-v2')
+
+    data = pd.read_csv(ret['data_file'], sep='\t')
+    assert data[['video', 'video_path', 'question', 'answer']].iloc[0].to_dict() == {
+        'video': 1,
+        'video_path': './videos/001.mp4',
+        'question': 'Question?',
+        'answer': 'A',
+    }
 
 
 def test_build_prompt_accepts_numeric_video_ids_from_tsv(tmp_path, monkeypatch):

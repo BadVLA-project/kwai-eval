@@ -219,6 +219,12 @@ You can launch the evaluation by setting either --data and --model or --config.
     # Reuse-aux: if set, when reuse is True, will also reuse the auxiliary evaluation files
     parser.add_argument('--reuse-aux', type=int, default=True, help='reuse auxiliary evaluation files')
     parser.add_argument(
+        '--skip-fresh-eval-cache',
+        type=int,
+        default=1,
+        help='Skip model x dataset before build_dataset() when a fresh cached evaluation result already exists.'
+    )
+    parser.add_argument(
         '--use-vllm', action='store_true', help='use vllm to generate, the flag is only supported in Llama4 for now')
     parser.add_argument('--use-verifier', action='store_true', help='use verifier to evaluate')
 
@@ -368,6 +374,13 @@ def main():
         elif dist is not None:
             dist.barrier()
 
+    def read_flag(path):
+        try:
+            with open(path, 'r') as f:
+                return f.read().strip()
+        except FileNotFoundError:
+            return ''
+
     # ---------------------------------------------------------------------------
     # Global debug log — one file per rank, captures ALL logging output.
     # Located at {work_dir}/debug_rank{N}.log so important diagnostics
@@ -430,6 +443,31 @@ def main():
                 barrier()
 
             bench_start_time = time.time()
+            pred_format = get_pred_file_format()
+            result_file_base = f'{model_name}_{dataset_name}.{pred_format}'
+            result_file = osp.join(pred_root, result_file_base)
+            prebuild_cached_eval_path = None
+            prebuild_cache_flag = osp.join(pred_root, f'.{model_name}_{dataset_name}.prebuild_cache')
+            if args.skip_fresh_eval_cache and args.mode != 'infer':
+                if RANK == 0:
+                    _, prebuild_cached_eval_path = find_cached_eval_result(
+                        result_file,
+                        dataset_name=dataset_name,
+                    )
+                    with open(prebuild_cache_flag, 'w') as _f:
+                        _f.write(prebuild_cached_eval_path or '')
+                if WORLD_SIZE > 1:
+                    barrier()
+                    if RANK != 0:
+                        prebuild_cached_eval_path = read_flag(prebuild_cache_flag)
+                if prebuild_cached_eval_path:
+                    logger.info(
+                        f'[PrebuildCache] Fresh cached evaluation result exists for model '
+                        f'{model_name} x dataset {dataset_name}: {prebuild_cached_eval_path}. '
+                        'Skipping build_dataset(), inference, and evaluation.'
+                    )
+                    continue
+
             # Per model x dataset log file capturing all warnings/errors from
             # every layer (model.py, inference_video.py, etc.).
             # Track barrier calls inside the try block so we can catch up
@@ -454,8 +492,6 @@ def main():
                     logging.Formatter('[%(asctime)s] %(levelname)s - %(name)s: %(message)s')
                 )
                 logging.getLogger().addHandler(_bench_log_handler)
-                pred_format = get_pred_file_format()
-                result_file_base = f'{model_name}_{dataset_name}.{pred_format}'
 
                 if use_config:
                     if WORLD_SIZE > 1:
@@ -485,7 +521,6 @@ def main():
                         continue
 
                 # Handling Multi-Turn Dataset
-                result_file = osp.join(pred_root, result_file_base)
                 # Reuse the previous prediction file if exists
                 if RANK == 0 and len(prev_pred_roots):
                     prepare_reuse_files(

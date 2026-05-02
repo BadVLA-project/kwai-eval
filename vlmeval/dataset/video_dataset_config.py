@@ -444,6 +444,9 @@ adaptive_dataset = {
     'MLVU_MCQ_adaptive': partial(MLVU_MCQ, dataset='MLVU_MCQ', adaptive=True),
     # TempCompass MCQ-only; the full TempCompass aggregate includes Captioning, which needs an LLM judge.
     'TempCompass_MCQ_adaptive': partial(TempCompass_MCQ, dataset='TempCompass_MCQ', adaptive=True),
+    # Vinoground / Video-TT
+    'Vinoground_adaptive': partial(Vinoground, dataset='Vinoground', adaptive=True),
+    'Video-TT_adaptive': partial(VideoTT, dataset='Video-TT', adaptive=True),
     # DREAM-1K
     'DREAM-1K_adaptive': partial(DREAM, dataset='DREAM-1K', adaptive=True),
     'DREAM_local_adaptive': partial(

@@ -172,6 +172,8 @@ EVAL_ID_MODE="${EVAL_ID_MODE:-day}"
 EVAL_ID="${EVAL_ID:-}"
 JUDGE="${JUDGE:-}"
 JUDGE_ARGS="${JUDGE_ARGS:-}"
+RESILIENT="${RESILIENT:-0}"
+PAIR_TIMEOUT="${PAIR_TIMEOUT:-7200}"
 
 # ===========================================================================
 # 9. NaN retry: rebuild pkl files so failed samples get re-attempted
@@ -200,6 +202,41 @@ if [ "${RETRY_NAN}" = "1" ]; then
   done
   echo ""
 fi
+
+build_worker_cmd() {
+  local model="$1"
+  local dataset="$2"
+  CMD=(
+    python launch_workers.py
+    --ngpu "${NGPU}"
+    --gpu-offset "${GPU_OFFSET}"
+    --delay "${DELAY}"
+    --
+    run.py
+    --use-vllm
+    --data "${dataset}"
+    --model "${model}"
+    --work-dir "${WORK_DIR}"
+  )
+
+  if [ -n "${JUDGE}" ]; then
+    CMD+=(--judge "${JUDGE}")
+  fi
+
+  if [ -n "${JUDGE_ARGS}" ]; then
+    CMD+=(--judge-args "${JUDGE_ARGS}")
+  fi
+
+  if [ -n "${EVAL_ID}" ]; then
+    CMD+=(--eval-id "${EVAL_ID}")
+  else
+    CMD+=(--eval-id-mode "${EVAL_ID_MODE}")
+  fi
+
+  if [ "${REUSE}" = "1" ]; then
+    CMD+=(--reuse)
+  fi
+}
 
 # ===========================================================================
 # 10. Build and run command
@@ -253,6 +290,9 @@ fi
 if [ "${RETRY_NAN}" = "1" ]; then
   echo "   retry_nan:  ON (RETRY_EMPTY=1)"
 fi
+if [ "${RESILIENT}" = "1" ]; then
+  echo "   resilient:  ON (pair_timeout=${PAIR_TIMEOUT}s)"
+fi
 echo "=================================================================="
 
 # ===========================================================================
@@ -290,7 +330,30 @@ cleanup_filler() {
 }
 trap cleanup_filler EXIT
 
-"${CMD[@]}"
+if [ "${RESILIENT}" = "1" ]; then
+  mkdir -p "${WORK_DIR}"
+  RESILIENT_LOG="${WORK_DIR}/resilient_failures.log"
+  : > "${RESILIENT_LOG}"
+  for model in "${MODEL_LIST[@]}"; do
+    for dataset in "${DATASETS[@]}"; do
+      build_worker_cmd "${model}" "${dataset}"
+      echo "=================================================================="
+      echo " [$(date '+%Y-%m-%d %H:%M:%S')] resilient pair: ${model} x ${dataset}"
+      echo "   timeout: ${PAIR_TIMEOUT}s"
+      echo "=================================================================="
+      if timeout --kill-after=60s "${PAIR_TIMEOUT}" "${CMD[@]}"; then
+        echo "[resilient] completed: ${model} x ${dataset}"
+      else
+        rc=$?
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] rc=${rc} model=${model} dataset=${dataset}" | tee -a "${RESILIENT_LOG}"
+        pkill -KILL -f 'run.py.*--use-vllm' 2>/dev/null || true
+        pkill -KILL -f 'launch_workers.py' 2>/dev/null || true
+      fi
+    done
+  done
+else
+  "${CMD[@]}"
+fi
 # AoTBench_ReverseFilm_adaptive
 #     AoTBench_UCF101_adaptive
 #     AoTBench_Rtime_t2v_adaptive

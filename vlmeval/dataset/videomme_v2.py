@@ -144,67 +144,99 @@ class VideoMMEv2(VideoBaseDataset):
             subtitle_dir='./subtitle',
             overwrite=False,
         ):
+            def tsv_is_usable(path):
+                if not os.path.exists(path):
+                    return False
+                try:
+                    data = pd.read_csv(path, sep='\t')
+                except Exception as err:
+                    print(
+                        f'Existing TSV {path} is not readable '
+                        f'({type(err).__name__}: {err}); regenerating.'
+                    )
+                    return False
+                required = ['video', 'video_path', 'question', 'options', 'answer']
+                missing = [col for col in required if col not in data.columns]
+                if missing:
+                    print(f'Existing TSV {path} misses columns {missing}; regenerating.')
+                    return False
+                if data.empty or data[required].isnull().any().any():
+                    print(f'Existing TSV {path} has empty required fields; regenerating.')
+                    return False
+                return True
+
             data_file = data_file or osp.join(pth, f'{dataset_name}.tsv')
-            if os.path.exists(data_file) and not overwrite:
+            if not overwrite and tsv_is_usable(data_file):
                 return data_file
 
-            if parquet_file is None:
-                for candidate in [
-                    osp.join(pth, 'test.parquet'),
-                    osp.join(pth, 'test-00000-of-00001.parquet'),
-                    osp.join(pth, 'videommev2', 'test-00000-of-00001.parquet'),
-                    osp.join(pth, 'data', 'test-00000-of-00001.parquet'),
-                ]:
-                    if os.path.exists(candidate):
-                        parquet_file = candidate
-                        break
-
-            if parquet_file is None:
-                # Try finding any parquet file
-                for root, dirs, files in os.walk(pth):
-                    for f in files:
-                        if f.endswith('.parquet'):
-                            parquet_file = os.path.join(root, f)
-                            break
-                    if parquet_file:
-                        break
-
-            if parquet_file is None:
-                print(f'Warning: No parquet file found in {pth}, cannot generate TSV.')
-                return data_file
-
-            print(f'Generating TSV from {parquet_file}...')
-            df = pd.read_parquet(parquet_file)
-            df = df.assign(index=range(len(df)))
-            df['video'] = df['video_id'].apply(str)
-            root_for_video = source_root or pth
-            df['video_path'] = df['video_id'].apply(lambda x: videommev2_video_relpath(root_for_video, x))
-            if os.path.isabs(subtitle_dir) and source_root is not None:
-                df['subtitle_path'] = df['video_id'].apply(
-                    lambda x: os.path.join(subtitle_dir, f'{x}.jsonl')
-                )
-            else:
-                subtitle_rel = os.path.relpath(subtitle_dir, source_root or pth)
-                df['subtitle_path'] = df['video_id'].apply(
-                    lambda x: './' + os.path.join(subtitle_rel, f'{x}.jsonl').replace(os.sep, '/')
-                )
-
-            # options may be a numpy array or list; convert to string representation
-            if 'options' in df.columns:
-                df['options'] = df['options'].apply(
-                    lambda x: str(list(x)) if not isinstance(x, str) else x
-                )
-
-            keep_cols = [
-                'index', 'video', 'video_path', 'question', 'options', 'answer',
-                'level', 'group_type', 'group_structure',
-                'second_head', 'third_head', 'subtitle_path'
-            ]
-            df = df[[c for c in keep_cols if c in df.columns]]
+            lock_path = data_file + '.lock'
             os.makedirs(osp.dirname(data_file), exist_ok=True)
-            df.to_csv(data_file, sep='\t', index=False)
-            print(f'TSV generated: {data_file}')
-            return data_file
+            with portalocker.Lock(lock_path, 'w', timeout=600):
+                if not overwrite and tsv_is_usable(data_file):
+                    return data_file
+
+                if parquet_file is None:
+                    for candidate in [
+                        osp.join(pth, 'test.parquet'),
+                        osp.join(pth, 'test-00000-of-00001.parquet'),
+                        osp.join(pth, 'videommev2', 'test-00000-of-00001.parquet'),
+                        osp.join(pth, 'data', 'test-00000-of-00001.parquet'),
+                    ]:
+                        if os.path.exists(candidate):
+                            parquet_file = candidate
+                            break
+
+                if parquet_file is None:
+                    # Try finding any parquet file
+                    for root, dirs, files in os.walk(pth):
+                        for f in files:
+                            if f.endswith('.parquet'):
+                                parquet_file = os.path.join(root, f)
+                                break
+                        if parquet_file:
+                            break
+
+                if parquet_file is None:
+                    print(f'Warning: No parquet file found in {pth}, cannot generate TSV.')
+                    return data_file
+
+                print(f'Generating TSV from {parquet_file}...')
+                df = pd.read_parquet(parquet_file)
+                df = df.assign(index=range(len(df)))
+                df['video'] = df['video_id'].apply(str)
+                root_for_video = source_root or pth
+                df['video_path'] = df['video_id'].apply(lambda x: videommev2_video_relpath(root_for_video, x))
+                if os.path.isabs(subtitle_dir) and source_root is not None:
+                    df['subtitle_path'] = df['video_id'].apply(
+                        lambda x: os.path.join(subtitle_dir, f'{x}.jsonl')
+                    )
+                else:
+                    subtitle_rel = os.path.relpath(subtitle_dir, source_root or pth)
+                    df['subtitle_path'] = df['video_id'].apply(
+                        lambda x: './' + os.path.join(subtitle_rel, f'{x}.jsonl').replace(os.sep, '/')
+                    )
+
+                # options may be a numpy array or list; convert to string representation
+                if 'options' in df.columns:
+                    df['options'] = df['options'].apply(
+                        lambda x: str(list(x)) if not isinstance(x, str) else x
+                    )
+
+                keep_cols = [
+                    'index', 'video', 'video_path', 'question', 'options', 'answer',
+                    'level', 'group_type', 'group_structure',
+                    'second_head', 'third_head', 'subtitle_path'
+                ]
+                df = df[[c for c in keep_cols if c in df.columns]]
+                tmp_file = f'{data_file}.tmp.{os.getpid()}'
+                try:
+                    df.to_csv(tmp_file, sep='\t', index=False)
+                    os.replace(tmp_file, data_file)
+                finally:
+                    if osp.exists(tmp_file):
+                        os.remove(tmp_file)
+                print(f'TSV generated: {data_file}')
+                return data_file
 
         local_paths = resolve_videommev2_paths(dataset_name=dataset_name)
 
@@ -221,7 +253,7 @@ class VideoMMEv2(VideoBaseDataset):
                 parquet_file=local_paths.parquet_file,
                 source_root=local_paths.source_root,
                 subtitle_dir=local_paths.subtitle_dir,
-                overwrite=True,
+                overwrite=False,
             )
         else:
             cache_path = get_cache_path(repo_id)

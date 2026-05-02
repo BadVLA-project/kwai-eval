@@ -36,6 +36,8 @@ def test_missing_video_benchmarks_have_explicit_adaptive_registrations():
         'LongVideoBench_adaptive',
         'LongVideoBench_adaptive_subs',
         'TempCompass_MCQ_adaptive',
+        'Vinoground_adaptive',
+        'Video-TT_adaptive',
     }
 
     assert expected <= keys
@@ -49,6 +51,10 @@ def test_new_video_benchmark_constructors_accept_adaptive_flag():
             "def __init__(self, dataset='LongVideoBench', use_subtitle=False, nframe=0, fps=-1, adaptive=False):"
         ),
         'vlmeval/dataset/tempcompass.py': "def __init__(self, dataset='TempCompass_MCQ', nframe=0, fps=-1, adaptive=False):",
+        'vlmeval/dataset/vinoground.py': (
+            "def __init__(self, dataset: str = 'Vinoground', nframe: int = 8, fps: int = -1, adaptive: bool = False):"
+        ),
+        'vlmeval/dataset/videott.py': "def __init__(self, dataset='Video-TT', nframe=0, fps=-1, adaptive=False):",
     }
 
     for path, text in expected_signatures.items():
@@ -67,6 +73,12 @@ def test_new_video_benchmark_constructors_forward_adaptive_flag():
             'super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)'
         ),
         'vlmeval/dataset/tempcompass.py': (
+            'super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)'
+        ),
+        'vlmeval/dataset/vinoground.py': (
+            'super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)'
+        ),
+        'vlmeval/dataset/videott.py': (
             'super().__init__(dataset=dataset, nframe=nframe, fps=fps, adaptive=adaptive)'
         ),
     }

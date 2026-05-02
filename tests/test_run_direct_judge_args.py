@@ -23,3 +23,11 @@ def test_run_direct_sets_readonly_videomme_cache_default():
     script = (ROOT / 'run_direct.sh').read_text(encoding='utf-8')
 
     assert 'export VIDEO_MME_DIR="${VIDEO_MME_DIR:-/ytech_m2v5_hdd/workspace/kling_mm/Datasets/VLMEvalKit_Dataset_Cache/HFCache/datasets--lmms-lab--Video-MME}"' in script
+
+
+def test_run_direct_has_resilient_pair_timeout_mode():
+    script = (ROOT / 'run_direct.sh').read_text(encoding='utf-8')
+
+    assert 'RESILIENT="${RESILIENT:-0}"' in script
+    assert 'PAIR_TIMEOUT="${PAIR_TIMEOUT:-7200}"' in script
+    assert 'timeout --kill-after=60s "${PAIR_TIMEOUT}"' in script
