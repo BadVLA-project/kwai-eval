@@ -3,7 +3,11 @@ from ..smp import *
 from ..smp.file import get_intermediate_file_path, get_file_extension
 from .video_base import VideoBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
-from .vcrbench_utils import resolve_vcrbench_dir
+from .vcrbench_utils import (
+    resolve_vcrbench_dir,
+    resolve_vcrbench_video_path,
+    vcrbench_local_integrity,
+)
 from ..utils import track_progress_rich
 
 
@@ -45,23 +49,16 @@ Please analyze these images and provide the answer to the question about the vid
         return ['VCR-Bench']
 
     def prepare_dataset(self, dataset_name='VCR-Bench', repo_id='VLM-Reasoning/VCR-Bench'):
-        def check_integrity(pth):
-            if pth is None:
-                return False
-            data_file = osp.join(pth, f'{dataset_name}.tsv')
-            if not osp.exists(data_file):
-                return False
-            data = load(data_file)
-            for video_pth in data['video_path']:
-                if not osp.exists(osp.join(pth, video_pth)):
-                    return False
-            return True
-
         local_path = resolve_vcrbench_dir(dataset_name=dataset_name)
         cache_path = get_cache_path(repo_id) if local_path is None else None
-        if check_integrity(local_path):
+        if vcrbench_local_integrity(local_path, dataset_name=dataset_name):
             dataset_path = local_path
-        elif check_integrity(cache_path):
+        elif local_path is not None:
+            raise FileNotFoundError(
+                f'VCRBench local directory was found at {local_path}, but it is incomplete. '
+                f'Expected {dataset_name}.tsv and readable videos under v1/videos or v1/videos/video.'
+            )
+        elif vcrbench_local_integrity(cache_path, dataset_name=dataset_name):
             dataset_path = cache_path
         else:
             if modelscope_flag_set():
@@ -81,9 +78,12 @@ Please analyze these images and provide the answer to the question about the vid
             line = self.data.iloc[line]
         if video_llm:
             question = line['question']
-            prefix, video_idx_path = os.path.split(line['video_path'])
             message = [dict(type='text', value=question)]
-            video_path = os.path.join(self.video_path, os.path.join(prefix, video_idx_path))
+            video_path = resolve_vcrbench_video_path(self.video_path, line['video_path'])
+            if video_path is None:
+                raise FileNotFoundError(
+                    f'VCRBench video not found: {line["video_path"]} under {self.video_path}'
+                )
             message.append(self.make_video_struct(video_path, video_id=line['video']))
             return message
         else:
