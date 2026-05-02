@@ -579,6 +579,10 @@ def main():
                         judge_kwargs['model'] = 'gpt-4o'
                     elif listinstr(['VDC'], dataset_name):
                         judge_kwargs['model'] = 'gpt-4o'
+                    elif listinstr(['VCRBench'], dataset_name):
+                        judge_kwargs['model'] = 'gpt-4o'
+                        judge_kwargs.setdefault('use_azure_sdk', True)
+                        judge_kwargs.setdefault('max_completion_tokens', 16384)
                     elif listinstr(['Video_MMLU_QA', 'Video_MMLU_CAP'], dataset_name):
                         judge_kwargs['model'] = 'qwen-72b'
                     elif listinstr(['MMVMBench'], dataset_name):

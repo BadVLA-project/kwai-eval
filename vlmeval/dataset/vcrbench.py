@@ -147,7 +147,10 @@ Please analyze these images and provide the answer to the question about the vid
         from .utils.vcrbench.cau_total import calu_pre_recall
 
         assert get_file_extension(eval_file) in ['xlsx', 'json', 'tsv'], 'data file should be an supported format (xlsx/json/tsv) file'  # noqa: E501
-        judge = judge_kwargs.pop('model','gpt-4o-0806')
+        judge_kwargs.setdefault('model', 'gpt-4o')
+        judge_kwargs.setdefault('use_azure_sdk', True)
+        judge_kwargs.setdefault('max_completion_tokens', 16384)
+        judge = judge_kwargs.pop('model')
         nproc = judge_kwargs.pop('nproc', 4)
 
         # step1: extract answer

@@ -124,3 +124,11 @@ def test_vcrbench_build_prompt_uses_resolved_video_path(tmp_path, monkeypatch):
     )
 
     assert prompt[-1]['value'] == str(video_dir / 'sample.mp4')
+
+
+def test_vcrbench_evaluate_defaults_to_azure_gpt4o():
+    source = (ROOT / 'vlmeval' / 'dataset' / 'vcrbench.py').read_text(encoding='utf-8')
+
+    assert "judge_kwargs.setdefault('model', 'gpt-4o')" in source
+    assert "judge_kwargs.setdefault('use_azure_sdk', True)" in source
+    assert "judge_kwargs.setdefault('max_completion_tokens', 16384)" in source

@@ -99,6 +99,22 @@ def test_vdc_default_judge_uses_gpt4o_when_llama_is_unavailable():
     assert match.group(1) == 'gpt-4o'
 
 
+def test_vcrbench_default_judge_uses_azure_gpt4o_path():
+    run_py = (ROOT / 'run.py').read_text(encoding='utf-8')
+    match = re.search(
+        r"elif listinstr\(\['VCRBench'\], dataset_name\):\s*\n"
+        r"\s*judge_kwargs\['model'\] = '([^']+)'\s*\n"
+        r"\s*judge_kwargs\.setdefault\('use_azure_sdk', (True|False)\)\s*\n"
+        r"\s*judge_kwargs\.setdefault\('max_completion_tokens', (\d+)\)",
+        run_py,
+    )
+
+    assert match is not None
+    assert match.group(1) == 'gpt-4o'
+    assert match.group(2) == 'True'
+    assert int(match.group(3)) >= 4096
+
+
 def test_vllm_flag_is_not_forwarded_to_judge_kwargs():
     run_py = (ROOT / 'run.py').read_text(encoding='utf-8')
 
