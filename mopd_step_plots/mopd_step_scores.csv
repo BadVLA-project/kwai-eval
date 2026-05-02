@@ -1,0 +1,9 @@
+benchmark,benchmark_short,step,model,score,delta_vs_base
+TimeLensBench_QVHighlights_adaptive,TL-QVHighlights,0,Qwen3-VL-4B-Instruct,54.31,0.0
+TimeLensBench_QVHighlights_adaptive,TL-QVHighlights,50,Qwen3-VL-4B-Instruct-MOPD-Step50,57.06,2.75
+TimeLensBench_QVHighlights_adaptive,TL-QVHighlights,100,Qwen3-VL-4B-Instruct-MOPD-Step100,58.84,4.53
+TimeLensBench_QVHighlights_adaptive,TL-QVHighlights,150,Qwen3-VL-4B-Instruct-MOPD-Step150,58.39,4.08
+Vinoground_adaptive,Vinoground-Text,0,Qwen3-VL-4B-Instruct,37.0,0.0
+Vinoground_adaptive,Vinoground-Text,50,Qwen3-VL-4B-Instruct-MOPD-Step50,38.2,1.2
+Vinoground_adaptive,Vinoground-Text,100,Qwen3-VL-4B-Instruct-MOPD-Step100,42.8,5.8
+Vinoground_adaptive,Vinoground-Text,150,Qwen3-VL-4B-Instruct-MOPD-Step150,44.4,7.4

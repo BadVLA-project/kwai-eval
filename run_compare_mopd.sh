@@ -131,24 +131,10 @@ if [ -n "${DATA:-}" ]; then
   read -ra DATASETS <<< "${DATA}"
 else
   DATASETS=(
-    LongVideoBench_adaptive
-    VideoMMMU_adaptive
-    TempCompass_MCQ_adaptive
-    Video-MME_adaptive
-    TimeLensBench_Charades_adaptive
-    TimeLensBench_ActivityNet_adaptive
     TimeLensBench_QVHighlights_adaptive
     Vinoground_adaptive
-    Video-TT_adaptive
-    AoTBench_ReverseFilm_adaptive
-    AoTBench_UCF101_adaptive
-    AoTBench_Rtime_t2v_adaptive
-    AoTBench_Rtime_v2t_adaptive
-    AoTBench_QA_adaptive
     MVBench_MP4_adaptive
-    Video_Holmes_adaptive
     ETBench_adaptive
-    MLVU_MCQ_adaptive
   )
 fi
 
@@ -160,11 +146,18 @@ if [ -n "${MODELS:-}" ]; then
   read -ra MODEL_LIST <<< "${MODELS}"
 else
   MODEL_LIST=(
-    Qwen3-VL-4B-Instruct
-    Qwen3-VL-4B-Instruct-R1
-    Qwen3-VL-4B-Instruct-R2
-    Qwen3-VL-4B-Instruct-R3
-    Qwen3-VL-8B-Instruct
+    Qwen3-VL-4B-Instruct-MOPD-Step50
+    Qwen3-VL-4B-Instruct-MOPD-Step100
+    Qwen3-VL-4B-Instruct-MOPD-Step150
+    Qwen3-VL-4B-Instruct-MOPD-Step200
+    Qwen3-VL-4B-Instruct-MOPD-Step250
+    Qwen3-VL-4B-Instruct-MOPD-Step300
+    Qwen3-VL-4B-Instruct-MOPD-Step350
+    Qwen3-VL-4B-Instruct-MOPD-Step400
+    Qwen3-VL-4B-Instruct-MOPD-Step450
+    Qwen3-VL-4B-Instruct-MOPD-Step500
+    Qwen3-VL-4B-Instruct-MOPD-Step550
+    Qwen3-VL-4B-Instruct-MOPD-Step583
   )
 fi
 
