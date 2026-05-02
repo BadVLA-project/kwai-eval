@@ -35,6 +35,9 @@ import numpy as np
 
 
 SCORE_SUFFIXES = (
+    "_etbench_acc.csv",
+    "_etbench_acc.xlsx",
+    "_score.xlsx",
     "_acc.csv",
     "_acc.xlsx",
     "_rating.json",
@@ -62,6 +65,15 @@ PRIMARY_KEYS = (
     "acc",
 )
 
+BENCH_PRIMARY_OVERRIDES = {
+    "vinoground": (
+        "text_score",
+        "overall/text_score",
+        "Text",
+        "text",
+    ),
+}
+
 COUNT_KEYS = {
     "sample",
     "samples",
@@ -79,6 +91,7 @@ BENCH_SHORT_NAMES = {
     "AoTBench_Rtime_t2v_adaptive": "Rtime-t2v",
     "AoTBench_Rtime_v2t_adaptive": "Rtime-v2t",
     "AoTBench_UCF101_adaptive": "UCF101",
+    "ETBench_adaptive": "ETBench",
     "MLVU_MCQ_adaptive": "MLVU",
     "MVBench_MP4_adaptive": "MVBench",
     "TempCompass_MCQ_adaptive": "TempCompass",
@@ -87,6 +100,7 @@ BENCH_SHORT_NAMES = {
     "TimeLensBench_QVHighlights_adaptive": "TL-QVHighlights",
     "Video_Holmes_adaptive": "Video-Holmes",
     "Video-MME_adaptive": "Video-MME",
+    "Vinoground_adaptive": "Vinoground-Text",
 }
 
 PALETTE = (
@@ -176,7 +190,22 @@ def _score_from_list(value) -> float:
     return float("nan")
 
 
-def _score_from_dict(data: dict) -> float:
+def _preferred_primary_keys(benchmark: str | None) -> tuple[str, ...]:
+    if not benchmark:
+        return ()
+    lower = benchmark.lower()
+    for token, keys in BENCH_PRIMARY_OVERRIDES.items():
+        if token in lower:
+            return keys
+    return ()
+
+
+def _score_from_dict(data: dict, benchmark: str | None = None) -> float:
+    preferred = _preferred_primary_keys(benchmark)
+    for key in preferred:
+        if key in data and isinstance(data[key], (int, float, str)):
+            return _normalize_score(data[key])
+
     for key in PRIMARY_KEYS:
         if key in data and isinstance(data[key], (int, float, str)):
             return _normalize_score(data[key])
@@ -212,6 +241,10 @@ def _score_from_dict(data: dict) -> float:
         return round(sum(list_scores) / len(list_scores), 4)
 
     flat = _flatten_metrics(data)
+    for key in preferred:
+        if key in flat:
+            return flat[key]
+
     for key in PRIMARY_KEYS:
         if key in flat:
             return flat[key]
@@ -278,8 +311,12 @@ def _frame_to_metrics(df) -> dict[str, float]:
     return result
 
 
-def _score_from_frame(df) -> float:
+def _score_from_frame(df, benchmark: str | None = None) -> float:
     metrics = _frame_to_metrics(df)
+    for key in _preferred_primary_keys(benchmark):
+        if key in metrics:
+            return metrics[key]
+
     for key in PRIMARY_KEYS:
         if key in metrics:
             return metrics[key]
@@ -298,19 +335,19 @@ def _score_from_frame(df) -> float:
     return float("nan")
 
 
-def _load_score(path: Path) -> float:
+def _load_score(path: Path, benchmark: str | None = None) -> float:
     try:
         if path.suffix == ".json":
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return _score_from_dict(data)
+                return _score_from_dict(data, benchmark)
             return float("nan")
 
         if path.suffix in {".csv", ".xlsx"}:
             import pandas as pd
 
             df = pd.read_csv(path) if path.suffix == ".csv" else pd.read_excel(path)
-            return _score_from_frame(df)
+            return _score_from_frame(df, benchmark)
     except Exception as exc:
         print(f"warning: failed to parse {path}: {exc}", file=sys.stderr)
     return float("nan")
@@ -357,7 +394,7 @@ def scan_model_scores(model_dir: Path) -> dict[str, float]:
             bench = _extract_benchmark(model_name, path.name)
             if not bench or bench in seen:
                 continue
-            score = _load_score(path)
+            score = _load_score(path, bench)
             if not math.isnan(score):
                 scores[bench] = score
                 seen.add(bench)
@@ -469,11 +506,13 @@ def build_mopd_curve_data(
 def _bench_sort_key(name: str) -> tuple[int, str]:
     order = [
         "AoTBench",
+        "ETBench",
         "MVBench",
         "MLVU",
         "Video-MME",
         "TempCompass",
         "TimeLensBench",
+        "Vinoground",
         "Video_Holmes",
     ]
     for idx, prefix in enumerate(order):
@@ -746,12 +785,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--normalized",
         action="store_true",
-        help="Plot gains relative to base instead of raw scores.",
+        help="Retained for compatibility. Gain curves are now always written.",
     )
     parser.add_argument(
         "--small-multiples",
         action="store_true",
-        help="Also write one compact subplot per benchmark.",
+        help="Write compact per-benchmark zoomed plots. This is now enabled by default.",
+    )
+    parser.add_argument(
+        "--no-small-multiples",
+        action="store_true",
+        help="Disable the compact per-benchmark zoomed plot.",
     )
     return parser.parse_args()
 
@@ -771,11 +815,18 @@ def main() -> int:
 
     scores_path, deltas_path = write_score_tables(data, out_dir, args.base_model)
 
-    suffix = "_gain" if args.normalized else ""
-    plot_path = out_dir / f"mopd_step_curves{suffix}.png"
-    plot_curves(data, plot_path, args.title, normalized=args.normalized)
+    plot_path = out_dir / "mopd_step_curves.png"
+    plot_curves(data, plot_path, args.title, normalized=False)
 
-    if args.small_multiples:
+    gain_path = out_dir / "mopd_step_gain_curves.png"
+    plot_curves(
+        data,
+        gain_path,
+        "MOPD Score Gains vs. Base",
+        normalized=True,
+    )
+
+    if not args.no_small_multiples:
         plot_small_multiples(
             data,
             out_dir / "mopd_step_small_multiples.png",
@@ -792,6 +843,9 @@ def main() -> int:
     print(f"Saved scores: {scores_path}")
     print(f"Saved deltas: {deltas_path}")
     print(f"Saved plot: {plot_path}")
+    print(f"Saved gain plot: {gain_path}")
+    if not args.no_small_multiples:
+        print(f"Saved zoomed plot: {out_dir / 'mopd_step_small_multiples.png'}")
     return 0
 
 
