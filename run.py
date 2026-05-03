@@ -428,10 +428,6 @@ def main():
         pred_root_meta = osp.join(args.work_dir, model_name)
         os.makedirs(pred_root_meta, exist_ok=True)
 
-        prev_pred_roots = ls(osp.join(args.work_dir, model_name), mode='dir')
-        if len(prev_pred_roots) and args.reuse:
-            prev_pred_roots.sort()
-
         if not osp.exists(pred_root):
             os.makedirs(pred_root, exist_ok=True)
 
@@ -446,6 +442,13 @@ def main():
             pred_format = get_pred_file_format()
             result_file_base = f'{model_name}_{dataset_name}.{pred_format}'
             result_file = osp.join(pred_root, result_file_base)
+            if RANK == 0 and args.reuse:
+                prepare_reuse_files(
+                    pred_root_meta=pred_root_meta, eval_id=eval_id, model_name=model_name,
+                    dataset_name=dataset_name, reuse=args.reuse, reuse_aux=args.reuse_aux
+                )
+            if WORLD_SIZE > 1:
+                barrier()
             prebuild_cached_eval_path = None
             prebuild_cache_flag = osp.join(pred_root, f'.{model_name}_{dataset_name}.prebuild_cache')
             if args.skip_fresh_eval_cache and args.mode != 'infer':
@@ -521,12 +524,8 @@ def main():
                         continue
 
                 # Handling Multi-Turn Dataset
-                # Reuse the previous prediction file if exists
-                if RANK == 0 and len(prev_pred_roots):
-                    prepare_reuse_files(
-                        pred_root_meta=pred_root_meta, eval_id=eval_id, model_name=model_name,
-                        dataset_name=dataset_name, reuse=args.reuse, reuse_aux=args.reuse_aux
-                    )
+                # Reuse was prepared before the prebuild cache check so completed
+                # runs can skip dataset construction entirely.
 
                 if WORLD_SIZE > 1:
                     barrier()

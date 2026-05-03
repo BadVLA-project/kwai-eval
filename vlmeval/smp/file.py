@@ -608,7 +608,8 @@ def prepare_reuse_files(pred_root_meta, eval_id, model_name, dataset_name, reuse
     # reuse flag is set
     prev_pred_roots = ls(pred_root_meta, mode='dir')
     prev_pred_roots.sort()
-    prev_pred_roots.remove(work_dir)
+    if work_dir in prev_pred_roots:
+        prev_pred_roots.remove(work_dir)
 
     files = ls(work_dir, match=f'{model_name}_{dataset_name}.')
     prev_file = None
@@ -616,8 +617,10 @@ def prepare_reuse_files(pred_root_meta, eval_id, model_name, dataset_name, reuse
     if len(files):
         pass
     else:
-        for root in prev_pred_roots[::-1]:
+        candidate_roots = prev_pred_roots[::-1] + [pred_root_meta]
+        for root in candidate_roots:
             fs = ls(root, match=f'{model_name}_{dataset_name}.')
+            fs = [f for f in fs if osp.abspath(f) != osp.abspath(work_dir)]
             if len(fs):
                 if len(fs) > 1:
                     warnings.warn(f'Multiple candidates in {root}: {fs}. Will use {fs[0]}')
@@ -626,7 +629,7 @@ def prepare_reuse_files(pred_root_meta, eval_id, model_name, dataset_name, reuse
                 break
         if prev_file is not None:
             warnings.warn(f'--reuse is set, will reuse prediction file {prev_file}')
-            os.system(f'cp {prev_file} {work_dir}')
+            shutil.copy2(prev_file, work_dir)
 
     if not reuse_aux:
         warnings.warn(f'--reuse-aux is not set, all auxiliary files in {work_dir} are removed. ')
@@ -637,6 +640,7 @@ def prepare_reuse_files(pred_root_meta, eval_id, model_name, dataset_name, reuse
         os.system(f'rm -rf {osp.join(work_dir, f"{model_name}_{dataset_name}_*gpt*")}')
     elif prev_aux_files is not None:
         for f in prev_aux_files:
-            os.system(f'cp {f} {work_dir}')
+            if osp.abspath(f) != osp.abspath(osp.join(work_dir, osp.basename(f))):
+                shutil.copy2(f, work_dir)
             warnings.warn(f'--reuse-aux is set, will reuse auxiliary file {f}')
     return

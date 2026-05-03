@@ -13,6 +13,7 @@ smp_pkg = types.ModuleType('vlmeval.smp')
 smp_pkg.__path__ = [str(ROOT / 'vlmeval' / 'smp')]
 misc_mod = types.ModuleType('vlmeval.smp.misc')
 misc_mod.toliststr = lambda x: x if isinstance(x, list) else [x]
+misc_mod.timestr = lambda _: '260503000000'
 vlm_mod = types.ModuleType('vlmeval.smp.vlm')
 vlm_mod.decode_base64_to_image_file = lambda *args, **kwargs: None
 validators_mod = types.ModuleType('validators')
@@ -26,7 +27,8 @@ for name, module in {
 }.items():
     sys.modules[name] = module
 
-from vlmeval.smp.file import find_cached_eval_result
+import vlmeval.smp.file as file_mod
+from vlmeval.smp.file import find_cached_eval_result, prepare_reuse_files
 
 
 def test_find_cached_eval_result_prefers_run_summary_score_json(tmp_path):
@@ -84,3 +86,40 @@ def test_run_py_can_skip_fresh_eval_cache_before_dataset_build():
     dataset_build = script.index('if use_config:', script.index('for _, dataset_name in enumerate(args.data):'))
 
     assert prebuild_cache_check < dataset_build
+
+
+def test_run_py_prepares_reuse_before_prebuild_cache_check():
+    script = (ROOT / 'run.py').read_text(encoding='utf-8')
+    dataset_loop = script.index('for _, dataset_name in enumerate(args.data):')
+
+    early_reuse = script.index('prepare_reuse_files(', dataset_loop)
+    prebuild_cache_check = script.index('prebuild_cached_eval_path', dataset_loop)
+    dataset_build = script.index('if use_config:', dataset_loop)
+
+    assert early_reuse < prebuild_cache_check < dataset_build
+
+
+def test_prepare_reuse_files_falls_back_to_model_root_summary_files(tmp_path, monkeypatch):
+    model_dir = tmp_path / 'Qwen3-VL-4B-Instruct'
+    current_dir = model_dir / 'T20260503'
+    current_dir.mkdir(parents=True)
+
+    pred = model_dir / 'Qwen3-VL-4B-Instruct_VideoMMMU_adaptive.xlsx'
+    pred.write_text('prediction placeholder', encoding='utf-8')
+    score = model_dir / 'Qwen3-VL-4B-Instruct_VideoMMMU_adaptive_score.json'
+    score.write_text(json.dumps({'Overall': {'acc': 100.0}}), encoding='utf-8')
+    monkeypatch.setattr(file_mod, 'fetch_aux_files', lambda _: [str(score)])
+
+    prepare_reuse_files(
+        pred_root_meta=str(model_dir),
+        eval_id='T20260503',
+        model_name='Qwen3-VL-4B-Instruct',
+        dataset_name='VideoMMMU_adaptive',
+        reuse=True,
+        reuse_aux=True,
+    )
+
+    copied_pred = current_dir / pred.name
+    copied_score = current_dir / score.name
+    assert copied_pred.read_text(encoding='utf-8') == 'prediction placeholder'
+    assert json.loads(copied_score.read_text(encoding='utf-8')) == {'Overall': {'acc': 100.0}}
