@@ -157,6 +157,24 @@ def test_build_method_comparison_data_aligns_opd_and_ema_grpo_steps(tmp_path):
     assert data.scores["EMA-GRPO"]["Vinoground_adaptive"] == [10.0, 11.0, 13.0]
 
 
+def test_build_method_comparison_data_skips_unscored_shared_steps(tmp_path):
+    for model, score in [
+        (BASE, 0.50),
+        (f"{BASE}-MOPD-Step50", 0.55),
+        (f"{BASE}-MOPD-Step100", 0.57),
+        (f"{BASE}-EMA-GRPO-Step50", 0.53),
+    ]:
+        _write_score_json(tmp_path, model, "AoTBench_QA_adaptive", score)
+
+    (tmp_path / f"{BASE}-EMA-GRPO-Step100").mkdir()
+
+    data = build_method_comparison_data(tmp_path, BASE)
+
+    assert data.steps == [0, 50]
+    assert data.scores["OPD"]["AoTBench_QA_adaptive"] == [50.0, 55.0]
+    assert data.scores["EMA-GRPO"]["AoTBench_QA_adaptive"] == [50.0, 53.0]
+
+
 def test_plot_mopd_step_curves_cli_writes_method_comparison_when_ema_exists(tmp_path):
     for model, score in [
         (BASE, 0.50),

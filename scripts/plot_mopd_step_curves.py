@@ -582,37 +582,49 @@ def build_method_comparison_data(
     if len(active_families) < 2:
         raise ValueError("Need at least two method families with parseable step directories.")
 
-    shared_steps = set(family_steps[active_families[0].label])
+    candidate_steps = set(family_steps[active_families[0].label])
     for family in active_families[1:]:
-        shared_steps &= set(family_steps[family.label])
-    steps = sorted(shared_steps)
-    if not steps:
+        candidate_steps &= set(family_steps[family.label])
+    candidate_steps = sorted(candidate_steps)
+    if not candidate_steps:
         raise ValueError("No shared non-base steps found across method families.")
 
-    all_steps = [0] + steps
-    family_model_scores = {}
-    family_models = {}
-    usable_families = []
-
-    for family in active_families:
-        models = [base_model] + [_family_model_name(base_model, family, step) for step in steps]
-        scores_by_model = {base_model: base_scores}
-        missing_model = False
-        for model in models[1:]:
+    step_model_scores = {}
+    usable_steps = []
+    for step in candidate_steps:
+        by_family = {}
+        for family in active_families:
+            model = _family_model_name(base_model, family, step)
             model_scores = scan_model_scores(work_dir / model)
             if not model_scores:
-                missing_model = True
                 break
-            scores_by_model[model] = model_scores
-        if missing_model:
-            skipped_families.append(family.label)
-            continue
-        usable_families.append(family)
-        family_models[family.label] = models
-        family_model_scores[family.label] = scores_by_model
+            by_family[family.label] = (model, model_scores)
+        if len(by_family) == len(active_families):
+            step_model_scores[step] = by_family
+            usable_steps.append(step)
 
-    if len(usable_families) < 2:
-        raise ValueError("Need at least two method families with parseable scores at shared steps.")
+    if not usable_steps:
+        raise ValueError("No shared method steps have parseable scores for every family.")
+
+    all_steps = [0] + usable_steps
+    usable_families = active_families
+    family_models = {
+        family.label: [
+            base_model,
+            *[step_model_scores[step][family.label][0] for step in usable_steps],
+        ]
+        for family in usable_families
+    }
+    family_model_scores = {
+        family.label: {
+            base_model: base_scores,
+            **{
+                step_model_scores[step][family.label][0]: step_model_scores[step][family.label][1]
+                for step in usable_steps
+            },
+        }
+        for family in usable_families
+    }
 
     common_benchmarks = set(base_scores)
     for family in usable_families:
@@ -1194,6 +1206,7 @@ def main() -> int:
         )
 
     method_outputs = []
+    method_skip_reason = None
     try:
         method_data = build_method_comparison_data(
             work_dir=work_dir,
@@ -1201,7 +1214,8 @@ def main() -> int:
             selected_steps=args.steps,
             benchmarks=args.benchmarks,
         )
-    except (FileNotFoundError, ValueError):
+    except (FileNotFoundError, ValueError) as exc:
+        method_skip_reason = str(exc)
         method_data = None
 
     if method_data is not None:
@@ -1245,6 +1259,8 @@ def main() -> int:
               f"{', '.join(method_data.benchmarks)}")
         for output in method_outputs:
             print(f"Saved method comparison: {output}")
+    elif method_skip_reason:
+        print(f"Skipped method comparison: {method_skip_reason}")
     return 0
 
 
