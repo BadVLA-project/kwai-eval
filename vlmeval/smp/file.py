@@ -587,6 +587,13 @@ def find_cached_eval_result(eval_file, dataset_name=None, judge_model=None):
     return None, None
 
 
+def _find_reuse_prediction_files(root, model_name, dataset_name):
+    pred_file = osp.join(root, f'{model_name}_{dataset_name}.{get_pred_file_format()}')
+    if osp.exists(pred_file) and osp.isfile(pred_file):
+        return [pred_file]
+    return []
+
+
 def prepare_reuse_files(pred_root_meta, eval_id, model_name, dataset_name, reuse, reuse_aux):
     import shutil
     from .misc import timestr
@@ -611,7 +618,7 @@ def prepare_reuse_files(pred_root_meta, eval_id, model_name, dataset_name, reuse
     if work_dir in prev_pred_roots:
         prev_pred_roots.remove(work_dir)
 
-    files = ls(work_dir, match=f'{model_name}_{dataset_name}.')
+    files = _find_reuse_prediction_files(work_dir, model_name, dataset_name)
     prev_file = None
     prev_aux_files = None
     if len(files):
@@ -619,7 +626,7 @@ def prepare_reuse_files(pred_root_meta, eval_id, model_name, dataset_name, reuse
     else:
         candidate_roots = prev_pred_roots[::-1] + [pred_root_meta]
         for root in candidate_roots:
-            fs = ls(root, match=f'{model_name}_{dataset_name}.')
+            fs = _find_reuse_prediction_files(root, model_name, dataset_name)
             fs = [f for f in fs if osp.abspath(f) != osp.abspath(work_dir)]
             if len(fs):
                 if len(fs) > 1:

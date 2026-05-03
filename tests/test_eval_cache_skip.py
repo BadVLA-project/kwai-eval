@@ -123,3 +123,53 @@ def test_prepare_reuse_files_falls_back_to_model_root_summary_files(tmp_path, mo
     copied_score = current_dir / score.name
     assert copied_pred.read_text(encoding='utf-8') == 'prediction placeholder'
     assert json.loads(copied_score.read_text(encoding='utf-8')) == {'Overall': {'acc': 100.0}}
+
+
+def test_prepare_reuse_files_ignores_current_prebuild_flag(tmp_path, monkeypatch):
+    model_dir = tmp_path / 'Qwen3-VL-4B-Instruct'
+    previous_dir = model_dir / 'T20260430'
+    current_dir = model_dir / 'T20260503'
+    previous_dir.mkdir(parents=True)
+    current_dir.mkdir()
+
+    stem = 'Qwen3-VL-4B-Instruct_VideoMMMU_adaptive'
+    (current_dir / f'.{stem}.prebuild_cache').write_text('', encoding='utf-8')
+    pred = previous_dir / f'{stem}.xlsx'
+    pred.write_text('prediction placeholder', encoding='utf-8')
+    monkeypatch.setattr(file_mod, 'fetch_aux_files', lambda _: [])
+
+    prepare_reuse_files(
+        pred_root_meta=str(model_dir),
+        eval_id='T20260503',
+        model_name='Qwen3-VL-4B-Instruct',
+        dataset_name='VideoMMMU_adaptive',
+        reuse=True,
+        reuse_aux=True,
+    )
+
+    assert (current_dir / pred.name).read_text(encoding='utf-8') == 'prediction placeholder'
+
+
+def test_prepare_reuse_files_prefers_prediction_over_jsonl_sidecar(tmp_path, monkeypatch):
+    model_dir = tmp_path / 'Qwen3-VL-4B-Instruct'
+    current_dir = model_dir / 'T20260503'
+    current_dir.mkdir(parents=True)
+
+    stem = 'Qwen3-VL-4B-Instruct_VideoMMMU_adaptive'
+    sidecar = model_dir / f'{stem}.jsonl'
+    sidecar.write_text('{"index": 0}\n', encoding='utf-8')
+    pred = model_dir / f'{stem}.xlsx'
+    pred.write_text('prediction placeholder', encoding='utf-8')
+    monkeypatch.setattr(file_mod, 'fetch_aux_files', lambda _: [])
+
+    prepare_reuse_files(
+        pred_root_meta=str(model_dir),
+        eval_id='T20260503',
+        model_name='Qwen3-VL-4B-Instruct',
+        dataset_name='VideoMMMU_adaptive',
+        reuse=True,
+        reuse_aux=True,
+    )
+
+    copied = current_dir / pred.name
+    assert copied.read_text(encoding='utf-8') == 'prediction placeholder'
