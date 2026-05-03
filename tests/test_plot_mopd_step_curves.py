@@ -7,7 +7,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.plot_mopd_step_curves import build_mopd_curve_data
+from scripts.plot_mopd_step_curves import build_method_comparison_data, build_mopd_curve_data
 
 
 BASE = "Qwen3-VL-4B-Instruct"
@@ -132,3 +132,58 @@ def test_plot_mopd_step_curves_cli_writes_plot_and_csv(tmp_path):
     assert (out_dir / "mopd_step_curves.png").is_file()
     assert (out_dir / "mopd_step_gain_curves.png").is_file()
     assert (out_dir / "mopd_step_small_multiples.png").is_file()
+
+
+def test_build_method_comparison_data_aligns_opd_and_ema_grpo_steps(tmp_path):
+    for model, etbench, vino in [
+        (BASE, 30.0, 10.0),
+        (f"{BASE}-MOPD-Step50", 32.0, 12.0),
+        (f"{BASE}-MOPD-Step100", 34.0, 14.0),
+        (f"{BASE}-MOPD-Step150", 36.0, 16.0),
+        (f"{BASE}-EMA-GRPO-Step50", 31.0, 11.0),
+        (f"{BASE}-EMA-GRPO-Step100", 33.0, 13.0),
+    ]:
+        _write_etbench_acc(tmp_path, model, etbench)
+        _write_vinoground_score(tmp_path, model, vino, video_score=20.0, group_score=30.0)
+
+    data = build_method_comparison_data(tmp_path, BASE)
+
+    assert data.families == ["OPD", "EMA-GRPO"]
+    assert data.steps == [0, 50, 100]
+    assert data.benchmarks == ["ETBench_adaptive", "Vinoground_adaptive"]
+    assert data.scores["OPD"]["ETBench_adaptive"] == [30.0, 32.0, 34.0]
+    assert data.scores["EMA-GRPO"]["ETBench_adaptive"] == [30.0, 31.0, 33.0]
+    assert data.scores["OPD"]["Vinoground_adaptive"] == [10.0, 12.0, 14.0]
+    assert data.scores["EMA-GRPO"]["Vinoground_adaptive"] == [10.0, 11.0, 13.0]
+
+
+def test_plot_mopd_step_curves_cli_writes_method_comparison_when_ema_exists(tmp_path):
+    for model, score in [
+        (BASE, 0.50),
+        (f"{BASE}-MOPD-Step50", 0.55),
+        (f"{BASE}-EMA-GRPO-Step50", 0.53),
+    ]:
+        _write_score_json(tmp_path, model, "AoTBench_QA_adaptive", score)
+
+    out_dir = tmp_path / "plots"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[1] / "scripts" / "plot_mopd_step_curves.py"),
+            "--work-dir",
+            str(tmp_path),
+            "--base-model",
+            BASE,
+            "--out-dir",
+            str(out_dir),
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (out_dir / "method_comparison_scores.csv").is_file()
+    assert (out_dir / "method_comparison_deltas.csv").is_file()
+    assert (out_dir / "method_comparison_mean_gain.png").is_file()
+    assert (out_dir / "method_comparison_benchmark_gains.png").is_file()

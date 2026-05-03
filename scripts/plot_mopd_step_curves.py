@@ -133,6 +133,33 @@ class MopdCurveData:
     dropped_benchmarks: dict[str, list[str]]
 
 
+@dataclass(frozen=True)
+class MethodFamily:
+    """A training method family mapped to checkpoint directory names."""
+
+    label: str
+    pattern: str
+
+
+@dataclass(frozen=True)
+class MethodComparisonData:
+    """Scores for multiple training method families aligned by shared steps."""
+
+    steps: list[int]
+    families: list[str]
+    benchmarks: list[str]
+    scores: dict[str, dict[str, list[float]]]
+    models: dict[str, list[str]]
+    skipped_families: list[str]
+    dropped_benchmarks: dict[str, list[str]]
+
+
+DEFAULT_METHOD_FAMILIES = (
+    MethodFamily("OPD", "{base}-MOPD-Step{step}"),
+    MethodFamily("EMA-GRPO", "{base}-EMA-GRPO-Step{step}"),
+)
+
+
 def _is_count_like(key: str) -> bool:
     return str(key).strip().lower() in COUNT_KEYS
 
@@ -503,6 +530,143 @@ def build_mopd_curve_data(
     )
 
 
+def _family_model_name(base_model: str, family: MethodFamily, step: int) -> str:
+    return family.pattern.format(base=base_model, step=step)
+
+
+def _discover_family_steps(work_dir: Path, base_model: str, family: MethodFamily) -> list[int]:
+    step_token = "__STEP__"
+    template = re.escape(family.pattern.format(base=base_model, step=step_token))
+    pattern = re.compile("^" + template.replace(re.escape(step_token), r"(\d+)") + "$")
+    steps = []
+    for entry in sorted(work_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        match = pattern.match(entry.name)
+        if match:
+            steps.append(int(match.group(1)))
+    return sorted(set(steps))
+
+
+def build_method_comparison_data(
+    work_dir: str | Path,
+    base_model: str,
+    families: tuple[MethodFamily, ...] = DEFAULT_METHOD_FAMILIES,
+    selected_steps: list[int] | None = None,
+    benchmarks: list[str] | None = None,
+) -> MethodComparisonData:
+    """Collect aligned curves for multiple training method families.
+
+    Steps are intersected across families, so each plotted point compares the
+    same checkpoint step for every method. Base is always included at step 0.
+    """
+
+    work_dir = Path(work_dir)
+    base_scores = scan_model_scores(work_dir / base_model)
+    if not base_scores:
+        raise FileNotFoundError(f"No parseable result files found for base model: {base_model}")
+
+    family_steps = {}
+    skipped_families = []
+    for family in families:
+        discovered = _discover_family_steps(work_dir, base_model, family)
+        if selected_steps is not None:
+            allowed = set(selected_steps)
+            discovered = [step for step in discovered if step in allowed]
+        if discovered:
+            family_steps[family.label] = discovered
+        else:
+            skipped_families.append(family.label)
+
+    active_families = [family for family in families if family.label in family_steps]
+    if len(active_families) < 2:
+        raise ValueError("Need at least two method families with parseable step directories.")
+
+    shared_steps = set(family_steps[active_families[0].label])
+    for family in active_families[1:]:
+        shared_steps &= set(family_steps[family.label])
+    steps = sorted(shared_steps)
+    if not steps:
+        raise ValueError("No shared non-base steps found across method families.")
+
+    all_steps = [0] + steps
+    family_model_scores = {}
+    family_models = {}
+    usable_families = []
+
+    for family in active_families:
+        models = [base_model] + [_family_model_name(base_model, family, step) for step in steps]
+        scores_by_model = {base_model: base_scores}
+        missing_model = False
+        for model in models[1:]:
+            model_scores = scan_model_scores(work_dir / model)
+            if not model_scores:
+                missing_model = True
+                break
+            scores_by_model[model] = model_scores
+        if missing_model:
+            skipped_families.append(family.label)
+            continue
+        usable_families.append(family)
+        family_models[family.label] = models
+        family_model_scores[family.label] = scores_by_model
+
+    if len(usable_families) < 2:
+        raise ValueError("Need at least two method families with parseable scores at shared steps.")
+
+    common_benchmarks = set(base_scores)
+    for family in usable_families:
+        for model in family_models[family.label]:
+            common_benchmarks &= set(family_model_scores[family.label][model])
+
+    if benchmarks:
+        requested = list(dict.fromkeys(benchmarks))
+        common_benchmarks &= set(requested)
+        ordered_benchmarks = [bench for bench in requested if bench in common_benchmarks]
+    else:
+        ordered_benchmarks = sorted(common_benchmarks, key=_bench_sort_key)
+
+    if not ordered_benchmarks:
+        raise ValueError("No benchmark intersection found across method families.")
+
+    dropped = defaultdict(list)
+    all_benchmarks = set(base_scores)
+    for family in usable_families:
+        for model in family_models[family.label]:
+            all_benchmarks |= set(family_model_scores[family.label][model])
+
+    for bench in sorted(all_benchmarks):
+        if benchmarks and bench not in benchmarks:
+            continue
+        missing = []
+        for family in usable_families:
+            for model in family_models[family.label]:
+                if bench not in family_model_scores[family.label][model]:
+                    missing.append(f"{family.label}:{model}")
+        if missing:
+            dropped[bench] = missing
+
+    scores = {}
+    for family in usable_families:
+        label = family.label
+        scores[label] = {}
+        for bench in ordered_benchmarks:
+            scores[label][bench] = [
+                family_model_scores[label][model][bench]
+                for model in family_models[label]
+            ]
+
+    return MethodComparisonData(
+        steps=all_steps,
+        families=[family.label for family in usable_families],
+        benchmarks=ordered_benchmarks,
+        scores=scores,
+        models=family_models,
+        skipped_families=skipped_families,
+        dropped_benchmarks=dict(dropped),
+    )
+
+
 def _bench_sort_key(name: str) -> tuple[int, str]:
     order = [
         "AoTBench",
@@ -573,6 +737,53 @@ def write_score_tables(data: MopdCurveData, out_dir: Path, base_model: str) -> t
         )
 
     deltas_path = out_dir / "mopd_step_deltas.csv"
+    pd.DataFrame(delta_rows).to_csv(deltas_path, index=False)
+    return scores_path, deltas_path
+
+
+def write_method_comparison_tables(data: MethodComparisonData, out_dir: Path) -> tuple[Path, Path]:
+    import pandas as pd
+
+    score_rows = []
+    for family in data.families:
+        for bench in data.benchmarks:
+            base_score = data.scores[family][bench][0]
+            for model, step, score in zip(data.models[family], data.steps, data.scores[family][bench]):
+                score_rows.append(
+                    {
+                        "family": family,
+                        "benchmark": bench,
+                        "benchmark_short": short_bench(bench),
+                        "step": step,
+                        "model": model,
+                        "score": score,
+                        "delta_vs_base": round(score - base_score, 4),
+                    }
+                )
+
+    scores_path = out_dir / "method_comparison_scores.csv"
+    pd.DataFrame(score_rows).to_csv(scores_path, index=False)
+
+    delta_rows = []
+    for family in data.families:
+        for bench in data.benchmarks:
+            values = data.scores[family][bench]
+            delta_rows.append(
+                {
+                    "family": family,
+                    "benchmark": bench,
+                    "benchmark_short": short_bench(bench),
+                    "base_score": values[0],
+                    "best_step": data.steps[int(np.nanargmax(values))],
+                    "best_score": float(np.nanmax(values)),
+                    "final_step": data.steps[-1],
+                    "final_score": values[-1],
+                    "final_delta": round(values[-1] - values[0], 4),
+                    "best_delta": round(float(np.nanmax(values)) - values[0], 4),
+                }
+            )
+
+    deltas_path = out_dir / "method_comparison_deltas.csv"
     pd.DataFrame(delta_rows).to_csv(deltas_path, index=False)
     return scores_path, deltas_path
 
@@ -745,9 +956,158 @@ def plot_small_multiples(data: MopdCurveData, out_path: Path, title: str) -> Non
     plt.close(fig)
 
 
+def plot_method_mean_gain(data: MethodComparisonData, out_path: Path, title: str) -> None:
+    plt.rcParams.update(
+        {
+            "font.family": "DejaVu Sans",
+            "font.size": 11,
+            "axes.titlesize": 16,
+            "axes.labelsize": 13,
+            "legend.fontsize": 11,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "savefig.facecolor": "white",
+        }
+    )
+
+    fig, ax = plt.subplots(figsize=(8.2, 5.2))
+    x = np.array(data.steps)
+    plotted = []
+    family_styles = {
+        "OPD": {"color": "#D55E00", "marker": "o"},
+        "EMA-GRPO": {"color": "#0072B2", "marker": "s"},
+    }
+
+    for idx, family in enumerate(data.families):
+        matrix = np.array([data.scores[family][bench] for bench in data.benchmarks], dtype=float)
+        gains = matrix - matrix[:, [0]]
+        mean_gain = gains.mean(axis=0)
+        plotted.extend(mean_gain.tolist())
+        style = family_styles.get(
+            family,
+            {"color": PALETTE[idx % len(PALETTE)], "marker": MARKERS[idx % len(MARKERS)]},
+        )
+        ax.plot(
+            x,
+            mean_gain,
+            label=family,
+            color=style["color"],
+            marker=style["marker"],
+            markersize=7,
+            linewidth=2.5,
+            markeredgecolor="white",
+            markeredgewidth=0.9,
+        )
+        for step, value in zip(x[1:], mean_gain[1:]):
+            ax.text(step, value, f"{value:+.1f}", ha="center", va="bottom", fontsize=9, color=style["color"])
+
+    ax.axhline(0, color="#333333", linewidth=1.0, linestyle="--", alpha=0.6)
+    ax.set_title(title, fontweight="bold", pad=12)
+    ax.set_xlabel("Training step")
+    ax.set_ylabel("Mean score gain vs. base")
+    ax.set_xticks(x)
+    ax.set_xticklabels(["Base" if step == 0 else str(step) for step in x])
+    ax.grid(axis="y", linestyle="--", linewidth=0.8, color="#C9CED6", alpha=0.72)
+    ax.grid(axis="x", linestyle=":", linewidth=0.6, color="#D6DAE0", alpha=0.55)
+    ax.spines[["top", "right"]].set_visible(False)
+    valid = np.array(plotted)
+    if len(valid):
+        lo, hi = float(valid.min()), float(valid.max())
+        pad = max(0.6, (hi - lo) * 0.2)
+        ax.set_ylim(lo - pad, hi + pad)
+    ax.legend(frameon=False, loc="upper left")
+    fig.text(
+        0.01,
+        0.01,
+        f"Mean over shared benchmarks: {', '.join(short_bench(b) for b in data.benchmarks)}.",
+        color="#555555",
+        fontsize=8.5,
+    )
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    fig.savefig(out_path, dpi=220, bbox_inches="tight")
+    for ext in (".pdf", ".svg"):
+        fig.savefig(out_path.with_suffix(ext), bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_method_benchmark_gains(data: MethodComparisonData, out_path: Path, title: str) -> None:
+    n = len(data.benchmarks)
+    cols = 3 if n > 4 else min(2, n)
+    rows = math.ceil(n / cols)
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 4.4, rows * 3.15), sharex=True)
+    axes = np.array(axes).reshape(-1)
+    x = np.array(data.steps)
+    family_styles = {
+        "OPD": {"color": "#D55E00", "marker": "o"},
+        "EMA-GRPO": {"color": "#0072B2", "marker": "s"},
+    }
+
+    for idx, bench in enumerate(data.benchmarks):
+        ax = axes[idx]
+        valid_values = []
+        for fi, family in enumerate(data.families):
+            y = np.array(data.scores[family][bench], dtype=float)
+            gains = y - y[0]
+            valid_values.extend(gains.tolist())
+            style = family_styles.get(
+                family,
+                {"color": PALETTE[fi % len(PALETTE)], "marker": MARKERS[fi % len(MARKERS)]},
+            )
+            ax.plot(
+                x,
+                gains,
+                label=family,
+                color=style["color"],
+                marker=style["marker"],
+                markersize=5.5,
+                linewidth=2.2,
+                markeredgecolor="white",
+                markeredgewidth=0.8,
+            )
+            ax.text(
+                x[-1],
+                gains[-1],
+                f"{gains[-1]:+.1f}",
+                ha="left",
+                va="center",
+                fontsize=8,
+                color=style["color"],
+                fontweight="bold",
+            )
+        ax.axhline(0, color="#333333", linewidth=0.9, linestyle="--", alpha=0.5)
+        ax.set_title(short_bench(bench), fontsize=11, fontweight="bold")
+        ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.55)
+        ax.spines[["top", "right"]].set_visible(False)
+        lo, hi = float(np.nanmin(valid_values)), float(np.nanmax(valid_values))
+        pad = max(0.5, (hi - lo) * 0.25)
+        ax.set_ylim(lo - pad, hi + pad)
+
+    for ax in axes[n:]:
+        ax.set_visible(False)
+    for ax in axes[:n]:
+        ax.set_xticks(x)
+        ax.set_xticklabels(["Base" if step == 0 else str(step) for step in data.steps])
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=len(data.families), frameon=False)
+    fig.suptitle(title, fontsize=15, fontweight="bold", y=1.02)
+    fig.supxlabel("Training step", y=0.06, fontsize=12)
+    fig.supylabel("Score gain vs. base", x=0.02, fontsize=12)
+    fig.tight_layout(rect=(0.03, 0.1, 1, 1))
+    fig.savefig(out_path, dpi=220, bbox_inches="tight")
+    for ext in (".pdf", ".svg"):
+        fig.savefig(out_path.with_suffix(ext), bbox_inches="tight")
+    plt.close(fig)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot base vs. Qwen3-VL MOPD step score curves on shared benchmarks."
+        description=(
+            "Plot base vs. Qwen3-VL MOPD step score curves on shared benchmarks. "
+            "If EMA-GRPO step directories are present, also writes OPD vs. EMA-GRPO comparison plots."
+        )
     )
     parser.add_argument(
         "--work-dir",
@@ -833,6 +1193,38 @@ def main() -> int:
             args.title,
         )
 
+    method_outputs = []
+    try:
+        method_data = build_method_comparison_data(
+            work_dir=work_dir,
+            base_model=args.base_model,
+            selected_steps=args.steps,
+            benchmarks=args.benchmarks,
+        )
+    except (FileNotFoundError, ValueError):
+        method_data = None
+
+    if method_data is not None:
+        method_scores_path, method_deltas_path = write_method_comparison_tables(method_data, out_dir)
+        mean_gain_path = out_dir / "method_comparison_mean_gain.png"
+        benchmark_gain_path = out_dir / "method_comparison_benchmark_gains.png"
+        plot_method_mean_gain(
+            method_data,
+            mean_gain_path,
+            "OPD vs. EMA-GRPO Mean Gains",
+        )
+        plot_method_benchmark_gains(
+            method_data,
+            benchmark_gain_path,
+            "OPD vs. EMA-GRPO Benchmark Gains",
+        )
+        method_outputs = [
+            method_scores_path,
+            method_deltas_path,
+            mean_gain_path,
+            benchmark_gain_path,
+        ]
+
     print(f"Models: {', '.join(data.models)}")
     print(f"Steps: {', '.join(map(str, data.steps))}")
     print(f"Benchmarks ({len(data.benchmarks)}): {', '.join(data.benchmarks)}")
@@ -846,6 +1238,13 @@ def main() -> int:
     print(f"Saved gain plot: {gain_path}")
     if not args.no_small_multiples:
         print(f"Saved zoomed plot: {out_dir / 'mopd_step_small_multiples.png'}")
+    if method_data is not None:
+        print(f"Method families: {', '.join(method_data.families)}")
+        print(f"Method comparison steps: {', '.join(map(str, method_data.steps))}")
+        print(f"Method comparison benchmarks ({len(method_data.benchmarks)}): "
+              f"{', '.join(method_data.benchmarks)}")
+        for output in method_outputs:
+            print(f"Saved method comparison: {output}")
     return 0
 
 
