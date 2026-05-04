@@ -4,7 +4,7 @@ try:
 except ImportError:
     dist = None
 from vlmeval.config import supported_VLM
-from vlmeval.utils import track_progress_rich
+from vlmeval.utils import shard_items, track_progress_rich
 from vlmeval.smp import *
 
 FAIL_MSG = 'Failed to obtain answer via API.'
@@ -163,7 +163,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     samples = list(dataset.videos) if getattr(dataset, 'pack', False) else list(range(len(dataset.data)))
     sample_map = {i: s for i, s in zip(sample_indices, samples)}
 
-    sample_indices_sub = sample_indices[rank::world_size]
+    sample_indices_sub = shard_items(sample_indices, rank, world_size)
     # Retry empty/failed predictions: treat '' (from SKIP_ERR) as incomplete
     # so they get re-attempted on the next run.
     retry_empty = os.environ.get('RETRY_EMPTY', '0') == '1'

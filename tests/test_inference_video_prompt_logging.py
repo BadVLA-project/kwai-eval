@@ -15,6 +15,7 @@ def load_inference_video(monkeypatch):
     config_mod.supported_VLM = {}
     utils_mod = types.ModuleType('vlmeval.utils')
     utils_mod.track_progress_rich = lambda *args, **kwargs: None
+    utils_mod.shard_items = lambda items, rank, world_size: list(items)[rank::world_size]
     smp_mod = types.ModuleType('vlmeval.smp')
     smp_mod.__all__ = []
 

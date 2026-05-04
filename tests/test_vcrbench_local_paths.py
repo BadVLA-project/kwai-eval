@@ -88,6 +88,7 @@ def test_vcrbench_build_prompt_uses_resolved_video_path(tmp_path, monkeypatch):
     utils_stub.build_judge = lambda *args, **kwargs: None
     utils_stub.DEBUG_MESSAGE = ''
     track_stub.track_progress_rich = lambda *args, **kwargs: None
+    track_stub.shard_items = lambda items, rank, world_size: list(items)[rank::world_size]
     hf_stub.snapshot_download = lambda *args, **kwargs: None
     smp_file_stub.get_intermediate_file_path = lambda *args, **kwargs: ''
     smp_file_stub.get_file_extension = lambda path: str(path).rsplit('.', 1)[-1]

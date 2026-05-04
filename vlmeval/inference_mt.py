@@ -1,7 +1,7 @@
 import torch
 import torch.distributed as dist
 from vlmeval.config import supported_VLM
-from vlmeval.utils import track_progress_rich
+from vlmeval.utils import shard_items, track_progress_rich
 from vlmeval.smp import *
 
 FAIL_MSG = 'Failed to obtain answer via API.'
@@ -81,7 +81,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         res.update(load(out_file))
 
     rank, world_size = get_rank_and_world_size()
-    sheet_indices = list(range(rank, len(dataset), world_size))
+    sheet_indices = shard_items(range(len(dataset)), rank, world_size)
     lt = len(sheet_indices)
     data = dataset.data.iloc[sheet_indices]
     data_indices = [i for i in data['index']]
