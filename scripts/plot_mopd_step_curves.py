@@ -381,13 +381,28 @@ def _load_score(path: Path, benchmark: str | None = None) -> float:
     return float("nan")
 
 
-def _extract_benchmark(model_name: str, filename: str) -> str | None:
+def _strip_score_suffix(filename: str) -> str | None:
     stem = filename
     for suffix in SCORE_SUFFIXES:
         if stem.endswith(suffix):
-            stem = stem[: -len(suffix)]
-            break
-    else:
+            return stem[: -len(suffix)]
+    return None
+
+
+def _has_model_prefix(model_name: str, filename: str) -> bool:
+    stem = _strip_score_suffix(filename)
+    return bool(stem and stem.startswith(f"{model_name}_"))
+
+
+def _dir_has_model_score_files(directory: Path, model_name: str) -> bool:
+    if not directory.is_dir():
+        return False
+    return any(path.is_file() and _has_model_prefix(model_name, path.name) for path in directory.iterdir())
+
+
+def _extract_benchmark(model_name: str, filename: str, require_model_prefix: bool = False) -> str | None:
+    stem = _strip_score_suffix(filename)
+    if stem is None:
         return None
 
     prefix = f"{model_name}_"
@@ -397,7 +412,11 @@ def _extract_benchmark(model_name: str, filename: str) -> str | None:
     match = re.search(rf"{re.escape(model_name)}_(.+)$", stem)
     if match:
         return match.group(1)
-    return None
+
+    if require_model_prefix:
+        return None
+
+    return stem
 
 
 WorkDirs = str | Path | Iterable[str | Path]
@@ -414,7 +433,11 @@ def _candidate_dirs(model_dir: Path) -> list[Path]:
     return [model_dir] + sorted(children, reverse=True)
 
 
-def scan_model_scores(model_dir: Path) -> dict[str, float]:
+def scan_model_scores(
+    model_dir: Path,
+    model_name: str | None = None,
+    require_model_prefix: bool = False,
+) -> dict[str, float]:
     """Return {benchmark: primary_score} for the newest result per benchmark."""
 
     if not model_dir.is_dir():
@@ -422,13 +445,13 @@ def scan_model_scores(model_dir: Path) -> dict[str, float]:
 
     scores = {}
     seen = set()
-    model_name = model_dir.name
+    model_name = model_name or model_dir.name
 
     for run_dir in _candidate_dirs(model_dir):
         for path in sorted(run_dir.iterdir()):
             if not path.is_file():
                 continue
-            bench = _extract_benchmark(model_name, path.name)
+            bench = _extract_benchmark(model_name, path.name, require_model_prefix=require_model_prefix)
             if not bench or bench in seen:
                 continue
             score = _load_score(path, bench)
@@ -447,8 +470,17 @@ def scan_model_scores_from_dirs(work_dirs: list[Path], model_name: str) -> dict[
 
     merged = {}
     for work_dir in work_dirs:
-        for bench, score in scan_model_scores(work_dir / model_name).items():
+        for bench, score in scan_model_scores(work_dir / model_name, model_name=model_name).items():
             merged.setdefault(bench, score)
+
+        if work_dir.name == model_name:
+            for bench, score in scan_model_scores(work_dir, model_name=model_name).items():
+                merged.setdefault(bench, score)
+            continue
+
+        if _dir_has_model_score_files(work_dir, model_name):
+            for bench, score in scan_model_scores(work_dir, model_name=model_name, require_model_prefix=True).items():
+                merged.setdefault(bench, score)
     return merged
 
 
@@ -459,6 +491,7 @@ def discover_mopd_models(work_dirs: list[Path], base_model: str) -> tuple[list[s
     steps = [0]
     skipped = []
     pattern = re.compile(rf"^{re.escape(base_model)}-MOPD-Step(\d+)$")
+    file_pattern = re.compile(rf"^({re.escape(base_model)}-MOPD-Step(\d+))_")
     found = []
 
     for work_dir in work_dirs:
@@ -470,12 +503,18 @@ def discover_mopd_models(work_dirs: list[Path], base_model: str) -> tuple[list[s
             match = pattern.match(entry.name)
             if match:
                 found.append((int(match.group(1)), entry.name))
+        for path in sorted(work_dir.iterdir()):
+            if not path.is_file():
+                continue
+            match = file_pattern.match(path.name)
+            if match and _strip_score_suffix(path.name):
+                found.append((int(match.group(2)), match.group(1)))
 
     for step, name in sorted(set(found)):
         models.append(name)
         steps.append(step)
 
-    if not any((work_dir / base_model).is_dir() for work_dir in work_dirs):
+    if not any((work_dir / base_model).is_dir() or _dir_has_model_score_files(work_dir, base_model) for work_dir in work_dirs):
         skipped.append(base_model)
 
     return models, steps, skipped
@@ -561,6 +600,7 @@ def _discover_family_steps(work_dirs: list[Path], base_model: str, family: Metho
     step_token = "__STEP__"
     template = re.escape(family.pattern.format(base=base_model, step=step_token))
     pattern = re.compile("^" + template.replace(re.escape(step_token), r"(\d+)") + "$")
+    file_pattern = re.compile("^(" + template.replace(re.escape(step_token), r"(\d+)") + r")_")
     steps = []
     for work_dir in work_dirs:
         if not work_dir.is_dir():
@@ -571,6 +611,12 @@ def _discover_family_steps(work_dirs: list[Path], base_model: str, family: Metho
             match = pattern.match(entry.name)
             if match:
                 steps.append(int(match.group(1)))
+        for path in sorted(work_dir.iterdir()):
+            if not path.is_file():
+                continue
+            match = file_pattern.match(path.name)
+            if match and _strip_score_suffix(path.name):
+                steps.append(int(match.group(2)))
     return sorted(set(steps))
 
 

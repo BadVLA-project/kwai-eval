@@ -34,6 +34,17 @@ def _write_score_json(root, model, bench, score):
     path.write_text(json.dumps({"score": score}), encoding="utf-8")
 
 
+def _write_unprefixed_score_json(root, model, bench, score):
+    path = _model_dir(root, model) / f"{bench}_score.json"
+    path.write_text(json.dumps({"score": score}), encoding="utf-8")
+
+
+def _write_flat_score_json(root, model, bench, score):
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{model}_{bench}_score.json"
+    path.write_text(json.dumps({"score": score}), encoding="utf-8")
+
+
 def _write_etbench_acc(root, model, avg):
     path = _model_dir(root, model) / f"{model}_ETBench_adaptive_etbench_acc.csv"
     pd.DataFrame([{"metric": "AVG", "value": avg}]).to_csv(path, index=False)
@@ -121,6 +132,34 @@ def test_build_mopd_curve_data_merges_same_layout_work_dirs(tmp_path):
     assert data.benchmarks == ["AoTBench_QA_adaptive", "NewBench_adaptive"]
     assert data.scores["AoTBench_QA_adaptive"] == [50.0, 55.0]
     assert data.scores["NewBench_adaptive"] == [61.0, 66.0]
+
+
+def test_build_mopd_curve_data_accepts_unprefixed_vlmevalkit_result_files(tmp_path):
+    step50 = f"{BASE}-MOPD-Step50"
+
+    _write_unprefixed_score_json(tmp_path, BASE, "AoTBench_QA_adaptive", 0.50)
+    _write_unprefixed_score_json(tmp_path, step50, "AoTBench_QA_adaptive", 0.55)
+
+    data = build_mopd_curve_data(tmp_path, BASE)
+
+    assert data.benchmarks == ["AoTBench_QA_adaptive"]
+    assert data.scores["AoTBench_QA_adaptive"] == [50.0, 55.0]
+
+
+def test_build_mopd_curve_data_accepts_flat_model_result_work_dirs(tmp_path):
+    base_dir = tmp_path / "eval_direct_final"
+    step_dir = tmp_path / "eval_direct_final_1"
+    step50 = f"{BASE}-MOPD-Step50"
+
+    _write_flat_score_json(base_dir, BASE, "AoTBench_QA_adaptive", 0.50)
+    _write_flat_score_json(step_dir, step50, "AoTBench_QA_adaptive", 0.55)
+
+    data = build_mopd_curve_data([base_dir, step_dir], BASE)
+
+    assert data.steps == [0, 50]
+    assert data.models == [BASE, step50]
+    assert data.benchmarks == ["AoTBench_QA_adaptive"]
+    assert data.scores["AoTBench_QA_adaptive"] == [50.0, 55.0]
 
 
 def test_build_mopd_curve_data_uses_etbench_avg_mvbench_overall_and_vinoground_text(tmp_path):
@@ -242,6 +281,22 @@ def test_build_method_comparison_data_merges_same_layout_work_dirs(tmp_path):
     assert data.benchmarks == ["AoTBench_QA_adaptive", "NewBench_adaptive"]
     assert data.scores["OPD"]["NewBench_adaptive"] == [60.0, 64.0]
     assert data.scores["EMA-GRPO"]["NewBench_adaptive"] == [60.0, 62.0]
+
+
+def test_build_method_comparison_data_accepts_flat_model_result_work_dirs(tmp_path):
+    base_dir = tmp_path / "eval_direct_final"
+    opd_dir = tmp_path / "eval_direct_final_1"
+    ema_dir = tmp_path / "eval_direct_final_2"
+
+    _write_flat_score_json(base_dir, BASE, "AoTBench_QA_adaptive", 0.50)
+    _write_flat_score_json(opd_dir, f"{BASE}-MOPD-Step50", "AoTBench_QA_adaptive", 0.55)
+    _write_flat_score_json(ema_dir, f"{BASE}-EMA-GRPO-Step50", "AoTBench_QA_adaptive", 0.53)
+
+    data = build_method_comparison_data([base_dir, opd_dir, ema_dir], BASE)
+
+    assert data.steps == [0, 50]
+    assert data.scores["OPD"]["AoTBench_QA_adaptive"] == [50.0, 55.0]
+    assert data.scores["EMA-GRPO"]["AoTBench_QA_adaptive"] == [50.0, 53.0]
 
 
 def test_build_method_comparison_data_skips_unscored_shared_steps(tmp_path):
