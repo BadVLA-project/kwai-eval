@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Plot benchmark score curves for Qwen3-VL MOPD checkpoints.
 
-The script scans a VLMEvalKit-style output directory, keeps benchmarks that are
-present in the base model and every selected MOPD step, and draws a clean
-paper-style line chart with step on the x-axis.
+The script scans a VLMEvalKit-style output directory, automatically includes
+benchmarks found in any selected checkpoint, fills missing scores with NaN, and
+draws a compact multi-subplot figure with one subplot per benchmark.
 
 Example:
     python scripts/plot_mopd_step_curves.py \
@@ -23,6 +23,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
@@ -123,7 +124,7 @@ MARKERS = ("o", "s", "^", "D", "v", "P", "X", "h", "*", "<", ">", "p")
 
 @dataclass(frozen=True)
 class MopdCurveData:
-    """Scores for benchmarks shared by base and every selected MOPD step."""
+    """Scores for benchmarks found in selected MOPD checkpoints."""
 
     steps: list[int]
     models: list[str]
@@ -399,6 +400,15 @@ def _extract_benchmark(model_name: str, filename: str) -> str | None:
     return None
 
 
+WorkDirs = str | Path | Iterable[str | Path]
+
+
+def _normalize_work_dirs(work_dir: WorkDirs) -> list[Path]:
+    if isinstance(work_dir, (str, Path)):
+        return [Path(work_dir)]
+    return [Path(path) for path in work_dir]
+
+
 def _candidate_dirs(model_dir: Path) -> list[Path]:
     children = [path for path in model_dir.iterdir() if path.is_dir()]
     return [model_dir] + sorted(children, reverse=True)
@@ -428,7 +438,21 @@ def scan_model_scores(model_dir: Path) -> dict[str, float]:
     return scores
 
 
-def discover_mopd_models(work_dir: Path, base_model: str) -> tuple[list[str], list[int], list[str]]:
+def scan_model_scores_from_dirs(work_dirs: list[Path], model_name: str) -> dict[str, float]:
+    """Merge scores for one model across result shards.
+
+    Earlier work dirs take priority when the same benchmark appears in multiple
+    shards. This keeps the merge deterministic and avoids accidental overwrite.
+    """
+
+    merged = {}
+    for work_dir in work_dirs:
+        for bench, score in scan_model_scores(work_dir / model_name).items():
+            merged.setdefault(bench, score)
+    return merged
+
+
+def discover_mopd_models(work_dirs: list[Path], base_model: str) -> tuple[list[str], list[int], list[str]]:
     """Return selected model names and steps, with base represented as step 0."""
 
     models = [base_model]
@@ -437,33 +461,36 @@ def discover_mopd_models(work_dir: Path, base_model: str) -> tuple[list[str], li
     pattern = re.compile(rf"^{re.escape(base_model)}-MOPD-Step(\d+)$")
     found = []
 
-    for entry in sorted(work_dir.iterdir()):
-        if not entry.is_dir():
+    for work_dir in work_dirs:
+        if not work_dir.is_dir():
             continue
-        match = pattern.match(entry.name)
-        if match:
-            found.append((int(match.group(1)), entry.name))
+        for entry in sorted(work_dir.iterdir()):
+            if not entry.is_dir():
+                continue
+            match = pattern.match(entry.name)
+            if match:
+                found.append((int(match.group(1)), entry.name))
 
-    for step, name in sorted(found):
+    for step, name in sorted(set(found)):
         models.append(name)
         steps.append(step)
 
-    if not (work_dir / base_model).is_dir():
+    if not any((work_dir / base_model).is_dir() for work_dir in work_dirs):
         skipped.append(base_model)
 
     return models, steps, skipped
 
 
 def build_mopd_curve_data(
-    work_dir: str | Path,
+    work_dir: WorkDirs,
     base_model: str,
     selected_steps: list[int] | None = None,
     benchmarks: list[str] | None = None,
 ) -> MopdCurveData:
-    """Collect score curves for benchmarks common to base and all MOPD models."""
+    """Collect score curves, auto-filling missing benchmark/model cells with NaN."""
 
-    work_dir = Path(work_dir)
-    models, steps, skipped_models = discover_mopd_models(work_dir, base_model)
+    work_dirs = _normalize_work_dirs(work_dir)
+    models, steps, skipped_models = discover_mopd_models(work_dirs, base_model)
 
     if selected_steps is not None:
         allowed = {0, *selected_steps}
@@ -473,7 +500,7 @@ def build_mopd_curve_data(
 
     model_scores = {}
     for model in models:
-        scores = scan_model_scores(work_dir / model)
+        scores = scan_model_scores_from_dirs(work_dirs, model)
         if scores:
             model_scores[model] = scores
         elif model not in skipped_models:
@@ -492,16 +519,12 @@ def build_mopd_curve_data(
     if len(models) < 2:
         raise ValueError("Need the base model and at least one MOPD step with parseable results.")
 
-    common = set(model_scores[models[0]])
-    for model in models[1:]:
-        common &= set(model_scores[model])
-
     if benchmarks:
         requested = list(dict.fromkeys(benchmarks))
-        common &= set(requested)
-        order = [bench for bench in requested if bench in common]
+        available = set().union(*(scores.keys() for scores in model_scores.values()))
+        order = [bench for bench in requested if bench in available]
     else:
-        order = sorted(common, key=_bench_sort_key)
+        order = sorted(set().union(*(scores.keys() for scores in model_scores.values())), key=_bench_sort_key)
 
     dropped = defaultdict(list)
     all_benchmarks = set().union(*(scores.keys() for scores in model_scores.values()))
@@ -513,10 +536,10 @@ def build_mopd_curve_data(
             dropped[bench] = missing
 
     if not order:
-        raise ValueError("No benchmark intersection found across base and selected MOPD steps.")
+        raise ValueError("No benchmarks found across base and selected MOPD steps.")
 
     score_curves = {
-        bench: [model_scores[model][bench] for model in models]
+        bench: [model_scores[model].get(bench, float("nan")) for model in models]
         for bench in order
     }
 
@@ -534,22 +557,25 @@ def _family_model_name(base_model: str, family: MethodFamily, step: int) -> str:
     return family.pattern.format(base=base_model, step=step)
 
 
-def _discover_family_steps(work_dir: Path, base_model: str, family: MethodFamily) -> list[int]:
+def _discover_family_steps(work_dirs: list[Path], base_model: str, family: MethodFamily) -> list[int]:
     step_token = "__STEP__"
     template = re.escape(family.pattern.format(base=base_model, step=step_token))
     pattern = re.compile("^" + template.replace(re.escape(step_token), r"(\d+)") + "$")
     steps = []
-    for entry in sorted(work_dir.iterdir()):
-        if not entry.is_dir():
+    for work_dir in work_dirs:
+        if not work_dir.is_dir():
             continue
-        match = pattern.match(entry.name)
-        if match:
-            steps.append(int(match.group(1)))
+        for entry in sorted(work_dir.iterdir()):
+            if not entry.is_dir():
+                continue
+            match = pattern.match(entry.name)
+            if match:
+                steps.append(int(match.group(1)))
     return sorted(set(steps))
 
 
 def build_method_comparison_data(
-    work_dir: str | Path,
+    work_dir: WorkDirs,
     base_model: str,
     families: tuple[MethodFamily, ...] = DEFAULT_METHOD_FAMILIES,
     selected_steps: list[int] | None = None,
@@ -561,15 +587,15 @@ def build_method_comparison_data(
     same checkpoint step for every method. Base is always included at step 0.
     """
 
-    work_dir = Path(work_dir)
-    base_scores = scan_model_scores(work_dir / base_model)
+    work_dirs = _normalize_work_dirs(work_dir)
+    base_scores = scan_model_scores_from_dirs(work_dirs, base_model)
     if not base_scores:
         raise FileNotFoundError(f"No parseable result files found for base model: {base_model}")
 
     family_steps = {}
     skipped_families = []
     for family in families:
-        discovered = _discover_family_steps(work_dir, base_model, family)
+        discovered = _discover_family_steps(work_dirs, base_model, family)
         if selected_steps is not None:
             allowed = set(selected_steps)
             discovered = [step for step in discovered if step in allowed]
@@ -595,7 +621,7 @@ def build_method_comparison_data(
         by_family = {}
         for family in active_families:
             model = _family_model_name(base_model, family, step)
-            model_scores = scan_model_scores(work_dir / model)
+            model_scores = scan_model_scores_from_dirs(work_dirs, model)
             if not model_scores:
                 break
             by_family[family.label] = (model, model_scores)
@@ -626,27 +652,21 @@ def build_method_comparison_data(
         for family in usable_families
     }
 
-    common_benchmarks = set(base_scores)
-    for family in usable_families:
-        for model in family_models[family.label]:
-            common_benchmarks &= set(family_model_scores[family.label][model])
-
-    if benchmarks:
-        requested = list(dict.fromkeys(benchmarks))
-        common_benchmarks &= set(requested)
-        ordered_benchmarks = [bench for bench in requested if bench in common_benchmarks]
-    else:
-        ordered_benchmarks = sorted(common_benchmarks, key=_bench_sort_key)
-
-    if not ordered_benchmarks:
-        raise ValueError("No benchmark intersection found across method families.")
-
-    dropped = defaultdict(list)
     all_benchmarks = set(base_scores)
     for family in usable_families:
         for model in family_models[family.label]:
             all_benchmarks |= set(family_model_scores[family.label][model])
 
+    if benchmarks:
+        requested = list(dict.fromkeys(benchmarks))
+        ordered_benchmarks = [bench for bench in requested if bench in all_benchmarks]
+    else:
+        ordered_benchmarks = sorted(all_benchmarks, key=_bench_sort_key)
+
+    if not ordered_benchmarks:
+        raise ValueError("No benchmarks found across method families.")
+
+    dropped = defaultdict(list)
     for bench in sorted(all_benchmarks):
         if benchmarks and bench not in benchmarks:
             continue
@@ -664,7 +684,7 @@ def build_method_comparison_data(
         scores[label] = {}
         for bench in ordered_benchmarks:
             scores[label][bench] = [
-                family_model_scores[label][model][bench]
+                family_model_scores[label][model].get(bench, float("nan"))
                 for model in family_models[label]
             ]
 
@@ -697,6 +717,20 @@ def _bench_sort_key(name: str) -> tuple[int, str]:
     return len(order), name
 
 
+def _first_finite(values: list[float]) -> float:
+    for value in values:
+        if not math.isnan(value):
+            return value
+    return float("nan")
+
+
+def _last_finite(values: list[float], steps: list[int]) -> tuple[int, float]:
+    for step, value in zip(reversed(steps), reversed(values)):
+        if not math.isnan(value):
+            return step, value
+    return steps[-1], float("nan")
+
+
 def short_bench(name: str) -> str:
     if name in BENCH_SHORT_NAMES:
         return BENCH_SHORT_NAMES[name]
@@ -723,7 +757,9 @@ def write_score_tables(data: MopdCurveData, out_dir: Path, base_model: str) -> t
                     "step": step,
                     "model": model,
                     "score": score,
-                    "delta_vs_base": round(score - base_score, 4),
+                    "delta_vs_base": round(score - base_score, 4)
+                    if not math.isnan(score) and not math.isnan(base_score)
+                    else float("nan"),
                 }
             )
 
@@ -733,18 +769,27 @@ def write_score_tables(data: MopdCurveData, out_dir: Path, base_model: str) -> t
     delta_rows = []
     for bench in data.benchmarks:
         values = data.scores[bench]
+        finite = np.array([value for value in values if not math.isnan(value)], dtype=float)
+        base_score = values[0]
+        final_step, final_score = _last_finite(values, data.steps)
+        best_score = float(np.nanmax(values)) if len(finite) else float("nan")
+        best_step = data.steps[int(np.nanargmax(values))] if len(finite) else data.steps[-1]
         delta_rows.append(
             {
                 "benchmark": bench,
                 "benchmark_short": short_bench(bench),
                 "base_model": base_model,
-                "base_score": values[0],
-                "best_step": data.steps[int(np.nanargmax(values))],
-                "best_score": float(np.nanmax(values)),
-                "final_step": data.steps[-1],
-                "final_score": values[-1],
-                "final_delta": round(values[-1] - values[0], 4),
-                "best_delta": round(float(np.nanmax(values)) - values[0], 4),
+                "base_score": base_score,
+                "best_step": best_step,
+                "best_score": best_score,
+                "final_step": final_step,
+                "final_score": final_score,
+                "final_delta": round(final_score - base_score, 4)
+                if not math.isnan(final_score) and not math.isnan(base_score)
+                else float("nan"),
+                "best_delta": round(best_score - base_score, 4)
+                if not math.isnan(best_score) and not math.isnan(base_score)
+                else float("nan"),
             }
         )
 
@@ -769,7 +814,9 @@ def write_method_comparison_tables(data: MethodComparisonData, out_dir: Path) ->
                         "step": step,
                         "model": model,
                         "score": score,
-                        "delta_vs_base": round(score - base_score, 4),
+                        "delta_vs_base": round(score - base_score, 4)
+                        if not math.isnan(score) and not math.isnan(base_score)
+                        else float("nan"),
                     }
                 )
 
@@ -780,18 +827,27 @@ def write_method_comparison_tables(data: MethodComparisonData, out_dir: Path) ->
     for family in data.families:
         for bench in data.benchmarks:
             values = data.scores[family][bench]
+            finite = np.array([value for value in values if not math.isnan(value)], dtype=float)
+            base_score = values[0]
+            final_step, final_score = _last_finite(values, data.steps)
+            best_score = float(np.nanmax(values)) if len(finite) else float("nan")
+            best_step = data.steps[int(np.nanargmax(values))] if len(finite) else data.steps[-1]
             delta_rows.append(
                 {
                     "family": family,
                     "benchmark": bench,
                     "benchmark_short": short_bench(bench),
-                    "base_score": values[0],
-                    "best_step": data.steps[int(np.nanargmax(values))],
-                    "best_score": float(np.nanmax(values)),
-                    "final_step": data.steps[-1],
-                    "final_score": values[-1],
-                    "final_delta": round(values[-1] - values[0], 4),
-                    "best_delta": round(float(np.nanmax(values)) - values[0], 4),
+                    "base_score": base_score,
+                    "best_step": best_step,
+                    "best_score": best_score,
+                    "final_step": final_step,
+                    "final_score": final_score,
+                    "final_delta": round(final_score - base_score, 4)
+                    if not math.isnan(final_score) and not math.isnan(base_score)
+                    else float("nan"),
+                    "best_delta": round(best_score - base_score, 4)
+                    if not math.isnan(best_score) and not math.isnan(base_score)
+                    else float("nan"),
                 }
             )
 
@@ -831,8 +887,10 @@ def plot_curves(
     plotted_values = []
     for idx, bench in enumerate(data.benchmarks):
         y = np.array(data.scores[bench], dtype=float)
+        raw_y = y.copy()
         if normalized:
-            y = y - y[0]
+            baseline = y[0] if not math.isnan(y[0]) else _first_finite(data.scores[bench])
+            y = y - baseline
         plotted_values.extend(y.tolist())
         color = PALETTE[idx % len(PALETTE)]
         marker = MARKERS[idx % len(MARKERS)]
@@ -850,12 +908,15 @@ def plot_curves(
         )
 
         if annotate_final:
-            delta = data.scores[bench][-1] - data.scores[bench][0]
-            suffix = f"{delta:+.1f}"
-            ann_y = y[-1]
+            final_step, final_score = _last_finite(raw_y.tolist(), data.steps)
+            baseline = raw_y[0] if not math.isnan(raw_y[0]) else _first_finite(raw_y.tolist())
+            if math.isnan(final_score) or math.isnan(baseline):
+                continue
+            suffix = f"{final_score - baseline:+.1f}"
+            ann_y = y[list(data.steps).index(final_step)]
             ax.annotate(
                 suffix,
-                xy=(x[-1], ann_y),
+                xy=(final_step, ann_y),
                 xytext=(7, 0),
                 textcoords="offset points",
                 va="center",
@@ -901,7 +962,7 @@ def plot_curves(
     fig.text(
         0.01,
         0.01,
-        "Only benchmarks available for base and every selected MOPD step are plotted.",
+        "Benchmarks are auto-discovered; missing model/benchmark cells are left blank.",
         color="#555555",
         fontsize=8.5,
     )
@@ -942,14 +1003,24 @@ def plot_small_multiples(data: MopdCurveData, out_path: Path, title: str) -> Non
             markeredgewidth=0.8,
         )
         for step, score in zip(x, y):
-            ax.text(step, score, f"{score:.1f}", ha="center", va="bottom", fontsize=7.8, color="#333333")
-        delta = y[-1] - y[0]
-        ax.set_title(f"{short_bench(bench)}  ({delta:+.1f})", fontsize=11, fontweight="bold")
+            if not math.isnan(score):
+                ax.text(step, score, f"{score:.1f}", ha="center", va="bottom", fontsize=7.8, color="#333333")
+        first = _first_finite(data.scores[bench])
+        final_step, final = _last_finite(data.scores[bench], data.steps)
+        if not math.isnan(y[0]) and not math.isnan(final):
+            suffix = f"{final - y[0]:+.1f}"
+        elif not math.isnan(first) and not math.isnan(final) and final_step != data.steps[0]:
+            suffix = f"{final - first:+.1f} from first"
+        else:
+            suffix = "partial"
+        ax.set_title(f"{short_bench(bench)}  ({suffix})", fontsize=11, fontweight="bold")
         ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.55)
         ax.spines[["top", "right"]].set_visible(False)
-        lo, hi = float(np.nanmin(y)), float(np.nanmax(y))
-        pad = max(0.8, (hi - lo) * 0.2)
-        ax.set_ylim(max(0.0, lo - pad), min(105.0, hi + pad))
+        finite = y[~np.isnan(y)]
+        if len(finite):
+            lo, hi = float(finite.min()), float(finite.max())
+            pad = max(0.8, (hi - lo) * 0.2)
+            ax.set_ylim(max(0.0, lo - pad), min(105.0, hi + pad))
 
     for ax in axes[n:]:
         ax.set_visible(False)
@@ -995,7 +1066,7 @@ def plot_method_mean_gain(data: MethodComparisonData, out_path: Path, title: str
     for idx, family in enumerate(data.families):
         matrix = np.array([data.scores[family][bench] for bench in data.benchmarks], dtype=float)
         gains = matrix - matrix[:, [0]]
-        mean_gain = gains.mean(axis=0)
+        mean_gain = np.nanmean(gains, axis=0)
         plotted.extend(mean_gain.tolist())
         style = family_styles.get(
             family,
@@ -1061,7 +1132,11 @@ def plot_method_benchmark_gains(data: MethodComparisonData, out_path: Path, titl
         valid_values = []
         for fi, family in enumerate(data.families):
             y = np.array(data.scores[family][bench], dtype=float)
-            gains = y - y[0]
+            if math.isnan(y[0]):
+                baseline = _first_finite(data.scores[family][bench])
+            else:
+                baseline = y[0]
+            gains = y - baseline
             valid_values.extend(gains.tolist())
             style = family_styles.get(
                 family,
@@ -1078,23 +1153,27 @@ def plot_method_benchmark_gains(data: MethodComparisonData, out_path: Path, titl
                 markeredgecolor="white",
                 markeredgewidth=0.8,
             )
-            ax.text(
-                x[-1],
-                gains[-1],
-                f"{gains[-1]:+.1f}",
-                ha="left",
-                va="center",
-                fontsize=8,
-                color=style["color"],
-                fontweight="bold",
-            )
+            final_step, final_gain = _last_finite(gains.tolist(), data.steps)
+            if not math.isnan(final_gain):
+                ax.text(
+                    final_step,
+                    final_gain,
+                    f"{final_gain:+.1f}",
+                    ha="left",
+                    va="center",
+                    fontsize=8,
+                    color=style["color"],
+                    fontweight="bold",
+                )
         ax.axhline(0, color="#333333", linewidth=0.9, linestyle="--", alpha=0.5)
         ax.set_title(short_bench(bench), fontsize=11, fontweight="bold")
         ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.55)
         ax.spines[["top", "right"]].set_visible(False)
-        lo, hi = float(np.nanmin(valid_values)), float(np.nanmax(valid_values))
-        pad = max(0.5, (hi - lo) * 0.25)
-        ax.set_ylim(lo - pad, hi + pad)
+        finite = np.array([value for value in valid_values if not math.isnan(value)])
+        if len(finite):
+            lo, hi = float(finite.min()), float(finite.max())
+            pad = max(0.5, (hi - lo) * 0.25)
+            ax.set_ylim(lo - pad, hi + pad)
 
     for ax in axes[n:]:
         ax.set_visible(False)
@@ -1124,7 +1203,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--work-dir",
         required=True,
-        help="Directory containing model result subdirectories.",
+        nargs="+",
+        help="One or more directories containing model result subdirectories.",
     )
     parser.add_argument(
         "--base-model",
@@ -1142,7 +1222,7 @@ def parse_args() -> argparse.Namespace:
         "--benchmarks",
         nargs="*",
         default=None,
-        help="Optional benchmark names to plot. By default uses the full intersection.",
+        help="Optional benchmark names to plot. By default auto-discovers all available benchmarks.",
     )
     parser.add_argument(
         "--out-dir",
@@ -1151,7 +1231,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--title",
-        default="MOPD Step Gains on Shared Benchmarks",
+        default="MOPD Scores by Benchmark",
         help="Figure title.",
     )
     parser.add_argument(
@@ -1174,29 +1254,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    work_dir = Path(args.work_dir)
-    out_dir = Path(args.out_dir) if args.out_dir else work_dir / "mopd_step_plots"
+    work_dirs = _normalize_work_dirs(args.work_dir)
+    out_dir = Path(args.out_dir) if args.out_dir else work_dirs[0] / "mopd_step_plots"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     data = build_mopd_curve_data(
-        work_dir=work_dir,
+        work_dir=work_dirs,
         base_model=args.base_model,
         selected_steps=args.steps,
         benchmarks=args.benchmarks,
     )
 
     scores_path, deltas_path = write_score_tables(data, out_dir, args.base_model)
-
-    plot_path = out_dir / "mopd_step_curves.png"
-    plot_curves(data, plot_path, args.title, normalized=False)
-
-    gain_path = out_dir / "mopd_step_gain_curves.png"
-    plot_curves(
-        data,
-        gain_path,
-        "MOPD Score Gains vs. Base",
-        normalized=True,
-    )
 
     if not args.no_small_multiples:
         plot_small_multiples(
@@ -1209,7 +1278,7 @@ def main() -> int:
     method_skip_reason = None
     try:
         method_data = build_method_comparison_data(
-            work_dir=work_dir,
+            work_dir=work_dirs,
             base_model=args.base_model,
             selected_steps=args.steps,
             benchmarks=args.benchmarks,
@@ -1220,13 +1289,7 @@ def main() -> int:
 
     if method_data is not None:
         method_scores_path, method_deltas_path = write_method_comparison_tables(method_data, out_dir)
-        mean_gain_path = out_dir / "method_comparison_mean_gain.png"
         benchmark_gain_path = out_dir / "method_comparison_benchmark_gains.png"
-        plot_method_mean_gain(
-            method_data,
-            mean_gain_path,
-            "OPD vs. EMA-GRPO Mean Gains",
-        )
         plot_method_benchmark_gains(
             method_data,
             benchmark_gain_path,
@@ -1235,23 +1298,21 @@ def main() -> int:
         method_outputs = [
             method_scores_path,
             method_deltas_path,
-            mean_gain_path,
             benchmark_gain_path,
         ]
 
+    print(f"Work dirs: {', '.join(str(path) for path in work_dirs)}")
     print(f"Models: {', '.join(data.models)}")
     print(f"Steps: {', '.join(map(str, data.steps))}")
     print(f"Benchmarks ({len(data.benchmarks)}): {', '.join(data.benchmarks)}")
     if data.skipped_models:
         print(f"Skipped models without parseable scores: {', '.join(data.skipped_models)}")
     if data.dropped_benchmarks:
-        print(f"Dropped non-intersection benchmarks: {len(data.dropped_benchmarks)}")
+        print(f"Benchmarks with missing model scores: {len(data.dropped_benchmarks)}")
     print(f"Saved scores: {scores_path}")
     print(f"Saved deltas: {deltas_path}")
-    print(f"Saved plot: {plot_path}")
-    print(f"Saved gain plot: {gain_path}")
     if not args.no_small_multiples:
-        print(f"Saved zoomed plot: {out_dir / 'mopd_step_small_multiples.png'}")
+        print(f"Saved multi-subplot plot: {out_dir / 'mopd_step_small_multiples.png'}")
     if method_data is not None:
         print(f"Method families: {', '.join(method_data.families)}")
         print(f"Method comparison steps: {', '.join(map(str, method_data.steps))}")

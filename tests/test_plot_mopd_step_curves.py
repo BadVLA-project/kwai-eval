@@ -58,7 +58,7 @@ def _write_vinoground_score(root, model, text_score, video_score, group_score):
     )
 
 
-def test_build_mopd_curve_data_orders_steps_and_keeps_intersection(tmp_path):
+def test_build_mopd_curve_data_orders_steps_and_auto_fills_missing_benchmarks(tmp_path):
     step50 = f"{BASE}-MOPD-Step50"
     step100 = f"{BASE}-MOPD-Step100"
     step150 = f"{BASE}-MOPD-Step150"
@@ -78,8 +78,49 @@ def test_build_mopd_curve_data_orders_steps_and_keeps_intersection(tmp_path):
 
     assert data.steps == [0, 50, 100, 150]
     assert data.models == [BASE, step50, step100, step150]
-    assert data.benchmarks == ["MVBench_MP4_adaptive"]
+    assert data.benchmarks == ["MVBench_MP4_adaptive", "Video-MME_adaptive", "BaseOnly_adaptive"]
     assert data.scores["MVBench_MP4_adaptive"] == [50.0, 55.0, 57.5, 58.0]
+    assert data.scores["Video-MME_adaptive"][:3] == [60.0, 62.0, 64.0]
+    assert pd.isna(data.scores["Video-MME_adaptive"][3])
+    assert data.scores["BaseOnly_adaptive"][0] == 42.0
+    assert all(pd.isna(value) for value in data.scores["BaseOnly_adaptive"][1:])
+
+
+def test_build_mopd_curve_data_auto_adds_benchmarks_with_missing_steps(tmp_path):
+    step50 = f"{BASE}-MOPD-Step50"
+    step100 = f"{BASE}-MOPD-Step100"
+
+    for model, score in [(BASE, 0.50), (step50, 0.55), (step100, 0.57)]:
+        _write_score_json(tmp_path, model, "AoTBench_QA_adaptive", score)
+
+    _write_score_json(tmp_path, step50, "NewBench_adaptive", 0.61)
+    _write_score_json(tmp_path, step100, "NewBench_adaptive", 0.63)
+
+    data = build_mopd_curve_data(tmp_path, BASE)
+
+    assert data.benchmarks == ["AoTBench_QA_adaptive", "NewBench_adaptive"]
+    assert data.scores["AoTBench_QA_adaptive"] == [50.0, 55.0, 57.0]
+    assert pd.isna(data.scores["NewBench_adaptive"][0])
+    assert data.scores["NewBench_adaptive"][1:] == [61.0, 63.0]
+    assert data.dropped_benchmarks["NewBench_adaptive"] == [BASE]
+
+
+def test_build_mopd_curve_data_merges_same_layout_work_dirs(tmp_path):
+    shard0 = tmp_path / "eval_direct_final"
+    shard1 = tmp_path / "eval_direct_final_1"
+    step50 = f"{BASE}-MOPD-Step50"
+
+    _write_score_json(shard0, BASE, "AoTBench_QA_adaptive", 0.50)
+    _write_score_json(shard0, step50, "AoTBench_QA_adaptive", 0.55)
+    _write_score_json(shard1, BASE, "NewBench_adaptive", 0.61)
+    _write_score_json(shard1, step50, "NewBench_adaptive", 0.66)
+
+    data = build_mopd_curve_data([shard0, shard1], BASE)
+
+    assert data.steps == [0, 50]
+    assert data.benchmarks == ["AoTBench_QA_adaptive", "NewBench_adaptive"]
+    assert data.scores["AoTBench_QA_adaptive"] == [50.0, 55.0]
+    assert data.scores["NewBench_adaptive"] == [61.0, 66.0]
 
 
 def test_build_mopd_curve_data_uses_etbench_avg_mvbench_overall_and_vinoground_text(tmp_path):
@@ -129,9 +170,9 @@ def test_plot_mopd_step_curves_cli_writes_plot_and_csv(tmp_path):
     assert result.returncode == 0, result.stderr
     assert (out_dir / "mopd_step_scores.csv").is_file()
     assert (out_dir / "mopd_step_deltas.csv").is_file()
-    assert (out_dir / "mopd_step_curves.png").is_file()
-    assert (out_dir / "mopd_step_gain_curves.png").is_file()
     assert (out_dir / "mopd_step_small_multiples.png").is_file()
+    assert not (out_dir / "mopd_step_curves.png").exists()
+    assert not (out_dir / "mopd_step_gain_curves.png").exists()
 
 
 def test_build_method_comparison_data_aligns_opd_and_ema_grpo_steps(tmp_path):
@@ -155,6 +196,52 @@ def test_build_method_comparison_data_aligns_opd_and_ema_grpo_steps(tmp_path):
     assert data.scores["EMA-GRPO"]["ETBench_adaptive"] == [30.0, 31.0, 33.0]
     assert data.scores["OPD"]["Vinoground_adaptive"] == [10.0, 12.0, 14.0]
     assert data.scores["EMA-GRPO"]["Vinoground_adaptive"] == [10.0, 11.0, 13.0]
+
+
+def test_build_method_comparison_data_auto_adds_benchmarks_with_missing_family_scores(tmp_path):
+    for model, score in [
+        (BASE, 0.50),
+        (f"{BASE}-MOPD-Step50", 0.55),
+        (f"{BASE}-EMA-GRPO-Step50", 0.53),
+    ]:
+        _write_score_json(tmp_path, model, "AoTBench_QA_adaptive", score)
+
+    _write_score_json(tmp_path, f"{BASE}-MOPD-Step50", "MopdOnly_adaptive", 0.61)
+    _write_score_json(tmp_path, f"{BASE}-EMA-GRPO-Step50", "EmaOnly_adaptive", 0.62)
+
+    data = build_method_comparison_data(tmp_path, BASE)
+
+    assert data.benchmarks == ["AoTBench_QA_adaptive", "EmaOnly_adaptive", "MopdOnly_adaptive"]
+    assert data.scores["OPD"]["AoTBench_QA_adaptive"] == [50.0, 55.0]
+    assert data.scores["EMA-GRPO"]["AoTBench_QA_adaptive"] == [50.0, 53.0]
+    assert pd.isna(data.scores["OPD"]["EmaOnly_adaptive"][0])
+    assert pd.isna(data.scores["OPD"]["EmaOnly_adaptive"][1])
+    assert pd.isna(data.scores["EMA-GRPO"]["EmaOnly_adaptive"][0])
+    assert data.scores["EMA-GRPO"]["EmaOnly_adaptive"][1] == 62.0
+    assert data.scores["OPD"]["MopdOnly_adaptive"][1] == 61.0
+    assert pd.isna(data.scores["EMA-GRPO"]["MopdOnly_adaptive"][1])
+
+
+def test_build_method_comparison_data_merges_same_layout_work_dirs(tmp_path):
+    shard0 = tmp_path / "eval_direct_final"
+    shard1 = tmp_path / "eval_direct_final_1"
+
+    for root, model, bench, score in [
+        (shard0, BASE, "AoTBench_QA_adaptive", 0.50),
+        (shard0, f"{BASE}-MOPD-Step50", "AoTBench_QA_adaptive", 0.55),
+        (shard0, f"{BASE}-EMA-GRPO-Step50", "AoTBench_QA_adaptive", 0.53),
+        (shard1, BASE, "NewBench_adaptive", 0.60),
+        (shard1, f"{BASE}-MOPD-Step50", "NewBench_adaptive", 0.64),
+        (shard1, f"{BASE}-EMA-GRPO-Step50", "NewBench_adaptive", 0.62),
+    ]:
+        _write_score_json(root, model, bench, score)
+
+    data = build_method_comparison_data([shard0, shard1], BASE)
+
+    assert data.steps == [0, 50]
+    assert data.benchmarks == ["AoTBench_QA_adaptive", "NewBench_adaptive"]
+    assert data.scores["OPD"]["NewBench_adaptive"] == [60.0, 64.0]
+    assert data.scores["EMA-GRPO"]["NewBench_adaptive"] == [60.0, 62.0]
 
 
 def test_build_method_comparison_data_skips_unscored_shared_steps(tmp_path):
@@ -203,5 +290,39 @@ def test_plot_mopd_step_curves_cli_writes_method_comparison_when_ema_exists(tmp_
     assert result.returncode == 0, result.stderr
     assert (out_dir / "method_comparison_scores.csv").is_file()
     assert (out_dir / "method_comparison_deltas.csv").is_file()
-    assert (out_dir / "method_comparison_mean_gain.png").is_file()
     assert (out_dir / "method_comparison_benchmark_gains.png").is_file()
+    assert not (out_dir / "method_comparison_mean_gain.png").exists()
+
+
+def test_plot_mopd_step_curves_cli_accepts_multiple_work_dirs(tmp_path):
+    shard0 = tmp_path / "eval_direct_final"
+    shard1 = tmp_path / "eval_direct_final_1"
+    step50 = f"{BASE}-MOPD-Step50"
+
+    _write_score_json(shard0, BASE, "AoTBench_QA_adaptive", 0.50)
+    _write_score_json(shard0, step50, "AoTBench_QA_adaptive", 0.55)
+    _write_score_json(shard1, BASE, "NewBench_adaptive", 0.60)
+    _write_score_json(shard1, step50, "NewBench_adaptive", 0.65)
+
+    out_dir = tmp_path / "plots"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[1] / "scripts" / "plot_mopd_step_curves.py"),
+            "--work-dir",
+            str(shard0),
+            str(shard1),
+            "--base-model",
+            BASE,
+            "--out-dir",
+            str(out_dir),
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    scores = pd.read_csv(out_dir / "mopd_step_scores.csv")
+    assert set(scores["benchmark"]) == {"AoTBench_QA_adaptive", "NewBench_adaptive"}
+    assert "Work dirs:" in result.stdout
