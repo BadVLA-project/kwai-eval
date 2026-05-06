@@ -32,6 +32,7 @@ mvbench_dataset = {
     'MVBench_64frame': partial(MVBench, dataset='MVBench', nframe=64),
     # MVBench not support fps, but MVBench_MP4 does
     'MVBench_MP4_8frame': partial(MVBench_MP4, dataset='MVBench_MP4', nframe=8),
+    'MVBench_MP4_64frame': partial(MVBench_MP4, dataset='MVBench_MP4', nframe=64),
     'MVBench_MP4_1fps': partial(MVBench_MP4, dataset='MVBench_MP4', fps=1.0),
 }
 
@@ -112,7 +113,8 @@ tempcompass_dataset = {
     'TempCompass_8frame': partial(TempCompass, dataset='TempCompass', nframe=8),
     'TempCompass_64frame': partial(TempCompass, dataset='TempCompass', nframe=64),
     'TempCompass_1fps': partial(TempCompass, dataset='TempCompass', fps=1.0),
-    'TempCompass_0.5fps': partial(TempCompass, dataset='TempCompass', fps=0.5)
+    'TempCompass_0.5fps': partial(TempCompass, dataset='TempCompass', fps=0.5),
+    'TempCompass_MCQ_64frame': partial(TempCompass_MCQ, dataset='TempCompass_MCQ', nframe=64),
 }
 
 # In order to reproduce the experimental results in CGbench paper,
@@ -275,6 +277,11 @@ aotbench_dataset = {
     'AoTBench_Rtime_t2v_32frame': partial(AoTBench, dataset='AoTBench_Rtime_t2v', nframe=32),
     'AoTBench_Rtime_v2t_32frame': partial(AoTBench, dataset='AoTBench_Rtime_v2t', nframe=32),
     'AoTBench_QA_32frame': partial(AoTBench, dataset='AoTBench_QA', nframe=32),
+    'AoTBench_ReverseFilm_64frame': partial(AoTBench, dataset='AoTBench_ReverseFilm', nframe=64),
+    'AoTBench_UCF101_64frame': partial(AoTBench, dataset='AoTBench_UCF101', nframe=64),
+    'AoTBench_Rtime_t2v_64frame': partial(AoTBench, dataset='AoTBench_Rtime_t2v', nframe=64),
+    'AoTBench_Rtime_v2t_64frame': partial(AoTBench, dataset='AoTBench_Rtime_v2t', nframe=64),
+    'AoTBench_QA_64frame': partial(AoTBench, dataset='AoTBench_QA', nframe=64),
 }
 
 futureomni_dataset = {
@@ -371,6 +378,10 @@ perceptiontest_dataset = {
 # ---------------------------------------------------------------------------
 # Adaptive sampling: ≤60s → 2fps, 60–256s → 1fps, >256s → uniform 256 frames
 # ---------------------------------------------------------------------------
+vinoground_dataset = {
+    'Vinoground_64frame': partial(Vinoground, dataset='Vinoground', nframe=64),
+}
+
 adaptive_dataset = {
     # AoTBench
     'AoTBench_ReverseFilm_adaptive': partial(AoTBench, dataset='AoTBench_ReverseFilm', adaptive=True),
@@ -461,7 +472,8 @@ dataset_groups = [
     mmbench_video_dataset, mvbench_dataset, videomme_dataset, videommev2_dataset, videommmu_dataset, longvideobench_dataset,
     mlvu_dataset, tempcompass_dataset, cgbench_dataset, worldsense_dataset, tamperbench_dataset,
     megabench_dataset, qbench_video_dataset, moviechat1k_dataset, vdc_dataset, video_holmes_dataset, vcrbench_dataset,
-    cvbench_video_dataset, cg_av_counting_dataset, video_mmlu_dataset, egoexobench_dataset, dream_1k_dataset, video_tt_dataset,
+    cvbench_video_dataset, cg_av_counting_dataset, video_mmlu_dataset, egoexobench_dataset, dream_1k_dataset,
+    video_tt_dataset, vinoground_dataset,
     vsibench_dataset, aotbench_dataset, futureomni_dataset,
     charades_sta_dataset, charades_timelens_dataset, timelens_bench_dataset, perceptiontest_dataset,
     etbench_dataset,
