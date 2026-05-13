@@ -1978,6 +1978,8 @@ qwen2vl_series = {
         model_path="/home/xuboshen/models/Qwen2.5-VL-3B-Instruct",
         min_pixels=1280 * 28 * 28,
         max_pixels=16384 * 28 * 28,
+        video_min_pixels=3136,
+        video_max_pixels=65536,
         use_custom_prompt=False,
     ),
     "Qwen2.5-VL-3B-Instruct-AWQ": partial(
@@ -1992,6 +1994,8 @@ qwen2vl_series = {
         model_path="/home/xuboshen/models/Qwen2.5-VL-7B-Instruct",
         min_pixels=1280 * 28 * 28,
         max_pixels=16384 * 28 * 28,
+        video_min_pixels=3136,
+        video_max_pixels=65536,
         use_custom_prompt=False,
     ),
     "Qwen2.5-VL-7B-Instruct-SFT": partial(

@@ -222,6 +222,8 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                     "generation_kwargs": getattr(model, 'generate_kwargs', {}),
                     "min_pixels": getattr(model, 'min_pixels', None),
                     "max_pixels": getattr(model, 'max_pixels', None),
+                    "video_min_pixels": getattr(model, 'video_min_pixels', None),
+                    "video_max_pixels": getattr(model, 'video_max_pixels', None),
                     "total_pixels": getattr(model, 'total_pixels', None),
                     "fps": getattr(model, 'fps', None),
                     "nframe": getattr(model, 'nframe', None),
