@@ -225,10 +225,12 @@ def test_qwen2_generate_batch_vllm_batches_requests(monkeypatch, tmp_path):
             [
                 {'type': 'video', 'value': str(short_video), 'fps': 1.0},
                 {'type': 'text', 'value': 'first'},
+                {'type': '_managed_prompt'},
             ],
             [
                 {'type': 'video', 'value': str(long_video), 'nframes': 256},
                 {'type': 'text', 'value': 'second'},
+                {'type': '_managed_prompt'},
             ],
         ],
         dataset='TimeLensBench_QVHighlights_adaptive',

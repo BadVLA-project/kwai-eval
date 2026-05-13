@@ -315,6 +315,8 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         """
         content = []
         for s in inputs:
+            if s.get('type') == '_managed_prompt':
+                continue
             if s['type'] == 'image':
                 item = {'type': 'image', 'image': ensure_image_url(s['value'])}
                 if dataset == 'OCRBench':
@@ -372,6 +374,8 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         video_count = len(video_inputs)
         cur_image_count = 0
         for s in inputs:
+            if s.get('type') == '_managed_prompt':
+                continue
             if s['type'] == 'image':
                 item = {'type': 'image', 'image': ensure_image_url(s['value'])}
                 if dataset == 'OCRBench':
