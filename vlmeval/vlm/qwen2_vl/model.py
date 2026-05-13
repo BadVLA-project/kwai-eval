@@ -536,54 +536,13 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
 
     def generate_inner_vllm(self, message, dataset=None):
         from vllm import SamplingParams
-
-        if listinstr(['omni'], self.model_path.lower()):
-            try:
-                from qwen_omni_utils import process_mm_info
-            except Exception as err:
-                logging.critical("qwen_omni_utils not found, please install it via 'pip install qwen-omni-utils[decord]'")  # noqa: E501
-                raise err
-        else:
-            try:
-                from qwen_vl_utils import process_vision_info
-            except Exception as err:
-                logging.critical("qwen_vl_utils not found, please install it via 'pip install qwen-vl-utils'")  # noqa: E501
-                raise err
-
-        messages = []
-        if self.system_prompt is not None:
-            messages.append({'role': 'system', 'content': self.system_prompt})
-        messages.append({'role': 'user', 'content': self._prepare_content_vllm(message, dataset=dataset)})
         if self.verbose:
-            print(f'\033[31m{messages}\033[0m')
-
-        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-
-        if listinstr(['omni'], self.model_path.lower()):
-            audios, images, videos = process_mm_info(messages, use_audio_in_video=self.use_audio_in_video)
-            video_kwargs = None
-        else:
-            images, videos, video_kwargs = process_vision_info(
-                messages,
-                return_video_kwargs=True
-            )
-        print('finishing process vision info in vllm.')
-
-        mm_data = {}
-        if images:
-            mm_data['image'] = images
-        if videos:
-            mm_data['video'] = videos
-        if listinstr(['omni'], self.model_path.lower()) and self.use_audio_in_video and 'audios' in dir():
-            mm_data['audio'] = audios
-
-        req = {'prompt': text}
-        if mm_data:
-            req['multi_modal_data'] = mm_data
-        if listinstr(['omni'], self.model_path.lower()) and self.use_audio_in_video:
-            req['mm_processor_kwargs'] = {"use_audio_in_video": True}
-        elif video_kwargs is not None:
-            req['mm_processor_kwargs'] = video_kwargs
+            messages_preview = []
+            if self.system_prompt is not None:
+                messages_preview.append({'role': 'system', 'content': self.system_prompt})
+            messages_preview.append({'role': 'user', 'content': self._prepare_content_vllm(message, dataset=dataset)})
+            print(f'\033[31m{messages_preview}\033[0m')
+        req = self._build_vllm_request(message, dataset=dataset)
 
         sampling_params = SamplingParams(
             temperature=0.0, max_tokens=self.max_new_tokens, stop_token_ids=None
@@ -618,6 +577,169 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         if self.verbose:
             print(f'\033[32m{generated_text}\033[0m')
         return generated_text
+
+    def _build_vllm_request(self, message, dataset=None):
+        """Build one vLLM request dict from a VLMEval message."""
+        is_omni = listinstr(['omni'], self.model_path.lower())
+        if is_omni:
+            try:
+                from qwen_omni_utils import process_mm_info
+            except Exception as err:
+                logging.critical(
+                    "qwen_omni_utils not found, please install it via 'pip install qwen-omni-utils[decord]'"
+                )
+                raise err
+        else:
+            try:
+                from qwen_vl_utils import process_vision_info
+            except Exception as err:
+                logging.critical("qwen_vl_utils not found, please install it via 'pip install qwen-vl-utils'")
+                raise err
+
+        messages = []
+        if self.system_prompt is not None:
+            messages.append({'role': 'system', 'content': self.system_prompt})
+        messages.append({'role': 'user', 'content': self._prepare_content_vllm(message, dataset=dataset)})
+
+        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+        if is_omni:
+            audios, images, videos = process_mm_info(messages, use_audio_in_video=self.use_audio_in_video)
+            video_kwargs = None
+        else:
+            images, videos, video_kwargs = process_vision_info(
+                messages,
+                return_video_kwargs=True,
+            )
+
+        mm_data = {}
+        if images:
+            mm_data['image'] = images
+        if videos:
+            mm_data['video'] = videos
+        if is_omni and self.use_audio_in_video and 'audios' in locals() and audios is not None:
+            mm_data['audio'] = audios
+
+        req = {'prompt': text}
+        if mm_data:
+            req['multi_modal_data'] = mm_data
+        if is_omni and self.use_audio_in_video:
+            req['mm_processor_kwargs'] = {'use_audio_in_video': True}
+        elif video_kwargs is not None:
+            req['mm_processor_kwargs'] = video_kwargs
+        return req
+
+    def generate_batch_vllm(self, messages, dataset=None, chunk_size=None):
+        """Run Qwen2/Qwen2.5 vLLM inference in chunks of batched requests."""
+        if chunk_size is None:
+            chunk_size = int(os.environ.get('VLLM_BATCH_CHUNK_SIZE', '32'))
+        from vllm import SamplingParams
+        from tqdm import tqdm as _tqdm
+
+        sampling_params = SamplingParams(
+            temperature=0.0,
+            max_tokens=self.max_new_tokens,
+            stop_token_ids=None,
+        )
+        skip_err = os.environ.get('SKIP_ERR', '0') == '1'
+        results = []
+        total_chunks = (len(messages) + chunk_size - 1) // chunk_size
+
+        for chunk_start in _tqdm(
+            range(0, len(messages), chunk_size),
+            total=total_chunks,
+            desc='vLLM batch generate (chunks)',
+        ):
+            chunk = messages[chunk_start: chunk_start + chunk_size]
+            chunk_results = [''] * len(chunk)
+            valid_pairs = []
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+            decode_timeout = int(os.environ.get('VLLM_DECODE_TIMEOUT', '120'))
+            n_workers = min(len(chunk), int(os.environ.get('VLLM_BUILD_WORKERS', '8')))
+
+            def _build_one(idx_msg):
+                pos, msg = idx_msg
+                return pos, self._build_vllm_request(msg, dataset=dataset)
+
+            pool = ThreadPoolExecutor(max_workers=n_workers)
+            try:
+                futures = {pool.submit(_build_one, (pos, msg)): pos for pos, msg in enumerate(chunk)}
+                done_futures = set()
+                try:
+                    for fut in as_completed(futures, timeout=decode_timeout):
+                        done_futures.add(fut)
+                        pos = futures[fut]
+                        try:
+                            valid_pairs.append(fut.result())
+                        except Exception as build_err:
+                            if not skip_err:
+                                raise
+                            logging.warning(
+                                f'generate_batch_vllm: _build_vllm_request failed for sample '
+                                f'{chunk_start + pos}, skipping. Error: {build_err}'
+                            )
+                except FuturesTimeoutError:
+                    pending = set(futures.keys()) - done_futures
+                    pending_positions = sorted(futures[f] for f in pending)
+                    if not skip_err:
+                        raise TimeoutError(
+                            f'video decode stalled for >{decode_timeout}s in chunk '
+                            f'{chunk_start // chunk_size + 1}'
+                        )
+                    logging.warning(
+                        f'generate_batch_vllm: video decode timeout ({decode_timeout}s) '
+                        f'in chunk {chunk_start // chunk_size + 1}/{total_chunks}; '
+                        f'skipping positions {pending_positions}'
+                    )
+                    for fut in pending:
+                        if fut.done():
+                            try:
+                                valid_pairs.append(fut.result())
+                            except Exception:
+                                pass
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+
+            valid_pairs.sort(key=lambda pair: pair[0])
+            valid_positions = [pos for pos, _ in valid_pairs]
+            valid_reqs = [req for _, req in valid_pairs]
+
+            if valid_reqs:
+                try:
+                    outputs = self.llm.generate(valid_reqs, sampling_params=sampling_params, use_tqdm=False)
+                except Exception as gen_err:
+                    if not skip_err:
+                        raise
+                    logging.warning(
+                        f'generate_batch_vllm: llm.generate failed for chunk starting at '
+                        f'{chunk_start} ({len(valid_reqs)} reqs), skipping chunk. Error: {gen_err}'
+                    )
+                    results.extend(chunk_results)
+                    continue
+
+                for pos, output in zip(valid_positions, outputs):
+                    generated_text = output.outputs[0].text if output.outputs else ''
+                    if self.post_process:
+                        resp = generated_text.split('\\boxed{')[-1]
+                        lt = len(resp)
+                        counter, end = 1, None
+                        for i in range(lt):
+                            if resp[i] == '{':
+                                counter += 1
+                            elif resp[i] == '}':
+                                counter -= 1
+                            if counter == 0:
+                                end = i
+                                break
+                            elif i == lt - 1:
+                                end = lt
+                                break
+                        if end is not None:
+                            generated_text = resp[:end]
+                    chunk_results[pos] = generated_text
+            results.extend(chunk_results)
+        return results
 
     def generate_inner(self, message, dataset=None):
         if self.use_vllm:

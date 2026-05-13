@@ -78,6 +78,18 @@ def make_qwen2_model(cls):
     model.nframe = 128
     model.FRAME_FACTOR = 2
     model.limit_mm_per_prompt = 128
+    model.generate_kwargs = {
+        'temperature': 0,
+        'top_p': 0.001,
+        'top_k': 1,
+        'repetition_penalty': 1.0,
+    }
+    model.max_new_tokens = 1024
+    model.model_path = 'Qwen2.5-VL-7B-Instruct'
+    model.system_prompt = None
+    model.use_audio_in_video = False
+    model.post_process = False
+    model.verbose = False
     return model
 
 
@@ -149,3 +161,89 @@ def test_qwen25_3b_and_7b_configure_qwen3_style_video_pixels():
     for model_name in ('Qwen2.5-VL-3B-Instruct', 'Qwen2.5-VL-7B-Instruct'):
         assert _literal_keyword(calls[model_name], 'video_min_pixels') == 3136
         assert _literal_keyword(calls[model_name], 'video_max_pixels') == 65536
+
+
+def test_qwen2_generate_batch_vllm_batches_requests(monkeypatch, tmp_path):
+    module = load_qwen2_model(monkeypatch)
+
+    class SamplingParams:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    vllm_mod = types.ModuleType('vllm')
+    vllm_mod.SamplingParams = SamplingParams
+    monkeypatch.setitem(sys.modules, 'vllm', vllm_mod)
+
+    seen_content = []
+
+    def process_vision_info(messages, return_video_kwargs=False):
+        content = messages[-1]['content']
+        seen_content.append(content)
+        video_item = next(item for item in content if item['type'] == 'video')
+        assert video_item['min_pixels'] == 3136
+        assert video_item['max_pixels'] == 65536
+        video_kwargs = {}
+        for key in ('fps', 'nframes'):
+            if key in video_item:
+                video_kwargs[key] = [video_item[key]]
+        return None, [f"decoded:{video_item['video']}"], video_kwargs
+
+    qwen_utils = types.ModuleType('qwen_vl_utils')
+    qwen_utils.process_vision_info = process_vision_info
+    monkeypatch.setitem(sys.modules, 'qwen_vl_utils', qwen_utils)
+
+    class FakeProcessor:
+        def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+            assert tokenize is False
+            assert add_generation_prompt is True
+            return f"prompt:{messages[-1]['content'][-1]['text']}"
+
+    class FakeOutput:
+        def __init__(self, text):
+            self.outputs = [types.SimpleNamespace(text=text)]
+
+    class FakeLLM:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, reqs, sampling_params=None, use_tqdm=False):
+            self.calls.append((reqs, sampling_params, use_tqdm))
+            assert isinstance(reqs, list)
+            return [FakeOutput(f'answer-{i}') for i, _ in enumerate(reqs)]
+
+    model = make_qwen2_model(module.Qwen2VLChat)
+    model.processor = FakeProcessor()
+    model.llm = FakeLLM()
+
+    short_video = tmp_path / 'short.mp4'
+    long_video = tmp_path / 'long.mp4'
+    short_video.write_bytes(b'')
+    long_video.write_bytes(b'')
+
+    responses = model.generate_batch_vllm(
+        [
+            [
+                {'type': 'video', 'value': str(short_video), 'fps': 1.0},
+                {'type': 'text', 'value': 'first'},
+            ],
+            [
+                {'type': 'video', 'value': str(long_video), 'nframes': 256},
+                {'type': 'text', 'value': 'second'},
+            ],
+        ],
+        dataset='TimeLensBench_QVHighlights_adaptive',
+        chunk_size=2,
+    )
+
+    assert responses == ['answer-0', 'answer-1']
+    assert len(model.llm.calls) == 1
+    reqs, sampling_params, use_tqdm = model.llm.calls[0]
+    assert len(reqs) == 2
+    assert reqs[0]['prompt'] == 'prompt:first'
+    assert reqs[1]['prompt'] == 'prompt:second'
+    assert reqs[0]['mm_processor_kwargs'] == {'fps': [1.0]}
+    assert reqs[1]['mm_processor_kwargs'] == {'nframes': [256]}
+    assert sampling_params.kwargs['temperature'] == 0.0
+    assert sampling_params.kwargs['max_tokens'] == 1024
+    assert use_tqdm is False
+    assert len(seen_content) == 2
