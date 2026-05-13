@@ -288,6 +288,49 @@ def test_qwen2_generation_env_overrides_are_applied(monkeypatch):
     assert model.generate_kwargs['temperature'] == 0.25
 
 
+def test_qwen25_7b_defaults_to_single_gpu_tensor_parallel(monkeypatch):
+    module = load_qwen2_model(monkeypatch)
+    sys.modules['torch'].cuda.device_count = lambda: 4
+    captured = {}
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    vllm_mod = types.ModuleType('vllm')
+    vllm_mod.LLM = FakeLLM
+    monkeypatch.setitem(sys.modules, 'vllm', vllm_mod)
+
+    module.Qwen2VLChat(
+        model_path='Qwen2.5-VL-7B-Instruct',
+        use_vllm=True,
+    )
+
+    assert captured['tensor_parallel_size'] == 1
+
+
+def test_qwen2_disables_torchvision_video_fallback(monkeypatch):
+    vision_process = types.ModuleType('qwen_vl_utils.vision_process')
+    original_backend = object()
+    vision_process.VIDEO_READER_BACKENDS = {'torchvision': original_backend}
+
+    qwen_utils = types.ModuleType('qwen_vl_utils')
+    qwen_utils.vision_process = vision_process
+    monkeypatch.setitem(sys.modules, 'qwen_vl_utils', qwen_utils)
+    monkeypatch.setitem(sys.modules, 'qwen_vl_utils.vision_process', vision_process)
+
+    load_qwen2_model(monkeypatch)
+
+    patched_backend = vision_process.VIDEO_READER_BACKENDS['torchvision']
+    assert patched_backend is not original_backend
+    try:
+        patched_backend({})
+    except RuntimeError as err:
+        assert 'torchvision video fallback is disabled' in str(err)
+    else:
+        raise AssertionError('patched torchvision backend should raise')
+
+
 def test_qwen2_vllm_request_keeps_legacy_video_kwargs_for_qwen2(monkeypatch, tmp_path):
     module = load_qwen2_model(monkeypatch)
     process_calls = []

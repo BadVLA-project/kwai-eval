@@ -16,6 +16,42 @@ from ...dataset import DATASET_MODALITY
 
 VLLM_MAX_IMAGE_INPUT_NUM = 128
 
+logger = logging.getLogger('vlmeval.qwen2_vl')
+
+
+def _patch_qwen_vl_utils_no_torchvision_fallback():
+    """Disable qwen-vl-utils torchvision fallback to avoid slow full-video loads."""
+    try:
+        import qwen_vl_utils.vision_process as _vp
+    except ImportError:
+        return
+    if "torchvision" in getattr(_vp, "VIDEO_READER_BACKENDS", {}):
+        def _torchvision_disabled(ele):
+            raise RuntimeError(
+                "torchvision video fallback is disabled to prevent slow full-video loads. "
+                "The primary video reader (decord) failed for this video."
+            )
+        _vp.VIDEO_READER_BACKENDS["torchvision"] = _torchvision_disabled
+        logging.info("Patched qwen_vl_utils: disabled torchvision video fallback")
+
+
+_patch_qwen_vl_utils_no_torchvision_fallback()
+logging.getLogger('qwen_vl_utils').setLevel(logging.WARNING)
+logging.getLogger('qwen_vl_utils.vision_process').setLevel(logging.WARNING)
+
+
+def _default_vllm_tp_size(model_path: str, available: int) -> int:
+    import re
+
+    m = re.search(r'[-_](\d+(?:\.\d+)?)B', model_path, re.IGNORECASE)
+    if m:
+        params_b = float(m.group(1))
+        if params_b < 8:
+            return 1
+        if params_b < 30:
+            return min(2, available)
+    return available if available > 0 else 1
+
 
 def ensure_image_url(image: str) -> str:
     prefixes = ['http://', 'https://', 'file://', 'data:image;']
@@ -260,16 +296,14 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
             from vllm import LLM
             gpu_count = torch.cuda.device_count()
-            if gpu_count >= 8:
-                tp_size = 8
-            elif gpu_count >= 4:
-                tp_size = 4
-            elif gpu_count >= 2:
-                tp_size = 2
+            env_tp = os.environ.get('VLLM_TP_SIZE', '')
+            if env_tp.isdigit():
+                tp_size = min(int(env_tp), gpu_count)
             else:
-                tp_size = 1
+                tp_size = _default_vllm_tp_size(self.model_path, gpu_count)
             logging.info(
-                f'Using vLLM for {self.model_path} inference with {tp_size} GPUs (available: {gpu_count})'
+                f'Using vLLM for {self.model_path} inference with tp_size={tp_size} '
+                f'(available GPUs: {gpu_count}). Set VLLM_TP_SIZE env var to override.'
             )
             if os.environ.get('VLLM_WORKER_MULTIPROC_METHOD') != 'spawn':
                 logging.warning(
@@ -659,6 +693,8 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             chunk = messages[chunk_start: chunk_start + chunk_size]
             chunk_results = [''] * len(chunk)
             valid_pairs = []
+            import time as _time
+            build_t0 = _time.perf_counter()
 
             from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
             decode_timeout = int(os.environ.get('VLLM_DECODE_TIMEOUT', '120'))
@@ -710,10 +746,13 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             valid_pairs.sort(key=lambda pair: pair[0])
             valid_positions = [pos for pos, _ in valid_pairs]
             valid_reqs = [req for _, req in valid_pairs]
+            build_elapsed = _time.perf_counter() - build_t0
 
             if valid_reqs:
                 try:
+                    generate_t0 = _time.perf_counter()
                     outputs = self.llm.generate(valid_reqs, sampling_params=sampling_params, use_tqdm=False)
+                    generate_elapsed = _time.perf_counter() - generate_t0
                 except Exception as gen_err:
                     if not skip_err:
                         raise
@@ -723,6 +762,34 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                     )
                     results.extend(chunk_results)
                     continue
+                total_elapsed = build_elapsed + generate_elapsed
+                slow_threshold = float(os.environ.get('VLLM_BATCH_SLOW_LOG_SECONDS', '30'))
+                if total_elapsed >= slow_threshold:
+                    token_counts = []
+                    finish_counts = {}
+                    for output in outputs:
+                        completion = output.outputs[0] if output.outputs else None
+                        if completion is None:
+                            continue
+                        token_ids = getattr(completion, 'token_ids', None)
+                        if token_ids is not None:
+                            token_counts.append(len(token_ids))
+                        finish_reason = getattr(completion, 'finish_reason', None)
+                        finish_counts[finish_reason] = finish_counts.get(finish_reason, 0) + 1
+                    token_summary = 'n/a'
+                    if token_counts:
+                        token_summary = (
+                            f'min/avg/max={min(token_counts)}/'
+                            f'{sum(token_counts) / len(token_counts):.1f}/'
+                            f'{max(token_counts)}'
+                        )
+                    logger.info(
+                        f'generate_batch_vllm: chunk {chunk_start // chunk_size + 1}/{total_chunks} '
+                        f'samples={len(chunk)} valid={len(valid_reqs)} '
+                        f'build_decode={build_elapsed:.2f}s generate={generate_elapsed:.2f}s '
+                        f'total={total_elapsed:.2f}s output_tokens={token_summary} '
+                        f'finish_reasons={finish_counts}'
+                    )
 
                 for pos, output in zip(valid_positions, outputs):
                     generated_text = output.outputs[0].text if output.outputs else ''
