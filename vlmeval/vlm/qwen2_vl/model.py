@@ -202,6 +202,10 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         self.video_min_pixels = video_min_pixels
         self.video_max_pixels = video_max_pixels
         self.total_pixels = total_pixels
+        if 'MAX_NEW_TOKENS' in os.environ:
+            max_new_tokens = int(os.environ['MAX_NEW_TOKENS'])
+        if 'TEMPERATURE' in os.environ:
+            temperature = float(os.environ['TEMPERATURE'])
         self.max_new_tokens = max_new_tokens
         if self.total_pixels and self.total_pixels > 24576 * 28 * 28:
             print('The total number of video tokens might become too large, resulting in an overly long input sequence. We recommend lowering **total_pixels** to below **24576 × 28 × 28**.')  # noqa: E501
@@ -253,7 +257,6 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         assert self.use_vllm + self.use_lmdeploy <= 1, "You can only set one flag between `use_vllm` and `use_lmdeploy` to True"  # noqa: E501
 
         if self.use_vllm:
-            import os
             os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
             from vllm import LLM
             gpu_count = torch.cuda.device_count()
@@ -268,7 +271,6 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             logging.info(
                 f'Using vLLM for {self.model_path} inference with {tp_size} GPUs (available: {gpu_count})'
             )
-            import os
             if os.environ.get('VLLM_WORKER_MULTIPROC_METHOD') != 'spawn':
                 logging.warning(
                     'VLLM_WORKER_MULTIPROC_METHOD is not set to spawn.'
@@ -611,10 +613,10 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             audios, images, videos = process_mm_info(messages, use_audio_in_video=self.use_audio_in_video)
             video_kwargs = None
         else:
-            images, videos, video_kwargs = process_vision_info(
-                messages,
-                return_video_kwargs=True,
-            )
+            vision_kwargs = {'return_video_kwargs': True}
+            if listinstr(['2.5', '2_5', 'qwen25', 'mimo'], self.model_path.lower()):
+                vision_kwargs['return_video_metadata'] = True
+            images, videos, video_kwargs = process_vision_info(messages, **vision_kwargs)
 
         mm_data = {}
         if images:
