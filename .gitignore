@@ -214,3 +214,7 @@ SenseNova*
 
 temp
 result*
+./mopd_step_plots
+./format_loss_report
+format_loss_report
+mopd_step_plots

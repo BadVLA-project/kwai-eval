@@ -132,7 +132,6 @@ if [ -n "${DATA:-}" ]; then
 else
   DATASETS=(
     LongVideoBench_adaptive
-    VideoMMMU_adaptive
     TempCompass_MCQ_adaptive
     Video-MME_adaptive
     TimeLensBench_Charades_adaptive
@@ -160,18 +159,15 @@ if [ -n "${MODELS:-}" ]; then
   read -ra MODEL_LIST <<< "${MODELS}"
 else
   MODEL_LIST=(
-    Qwen3-VL-4B-Instruct
-    Qwen3-VL-4B-Instruct-R1
-    Qwen3-VL-4B-Instruct-R2
-    Qwen3-VL-4B-Instruct-R3
-    Qwen3-VL-8B-Instruct
+    Qwen2.5-VL-7B-Instruct
+    Qwen2.5-VL-7B-mopd
   )
 fi
 
 # ===========================================================================
 # 8. Work directory and run settings
 # ===========================================================================
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_final}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_qwen25}"
 REUSE="${REUSE:-1}"
 RETRY_NAN="${RETRY_NAN:-0}"
 DELAY="${DELAY:-15}"
@@ -378,6 +374,24 @@ fi
 #     Video-MME-v2_adaptive
 #     VideoMMMU_adaptive
 #     TempCompass_MCQ_adaptive
+# LongVideoBench_adaptive
+#     VideoMMMU_adaptive
+#     TempCompass_MCQ_adaptive
+#     Video-MME_adaptive
+#     TimeLensBench_Charades_adaptive
+#     TimeLensBench_ActivityNet_adaptive
+#     TimeLensBench_QVHighlights_adaptive
+#     Vinoground_adaptive
+#     Video-TT_adaptive
+#     AoTBench_ReverseFilm_adaptive
+#     AoTBench_UCF101_adaptive
+#     AoTBench_Rtime_t2v_adaptive
+#     AoTBench_Rtime_v2t_adaptive
+#     AoTBench_QA_adaptive
+#     MVBench_MP4_adaptive
+#     Video_Holmes_adaptive
+#     ETBench_adaptive
+#     MLVU_MCQ_adaptive
     # Qwen3-VL-4B-Instruct-R1        # base + hier_seg
     # Qwen3-VL-4B-Instruct-R2        # base + aot
     # Qwen3-VL-4B-Instruct-R3        # base + event_logic

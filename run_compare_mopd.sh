@@ -131,10 +131,10 @@ if [ -n "${DATA:-}" ]; then
   read -ra DATASETS <<< "${DATA}"
 else
   DATASETS=(
-    TimeLensBench_QVHighlights_adaptive
-    Vinoground_adaptive
-    MVBench_MP4_adaptive
-    ETBench_adaptive
+    Video-MME_adaptive
+    TimeLensBench_Charades_adaptive
+    Video_Holmes_adaptive
+    Video-TT_adaptive
   )
 fi
 
@@ -157,14 +157,13 @@ else
     Qwen3-VL-4B-Instruct-MOPD-Step450
     Qwen3-VL-4B-Instruct-MOPD-Step500
     Qwen3-VL-4B-Instruct-MOPD-Step550
-    Qwen3-VL-4B-Instruct-MOPD-Step583
   )
 fi
 
 # ===========================================================================
 # 8. Work directory and run settings
 # ===========================================================================
-WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_final}"
+WORK_DIR="${WORK_DIR:-/m2v_intern/xuboshen/zgw/VideoProxyMixed/eval_direct_final_1}"
 REUSE="${REUSE:-1}"
 RETRY_NAN="${RETRY_NAN:-0}"
 DELAY="${DELAY:-15}"
